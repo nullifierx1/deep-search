@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
+import time as _time
 import tkinter as tk
 import webbrowser
 from queue import Queue, Empty
@@ -13,13 +14,31 @@ from .models import SearchRequest
 from .output import save_results_json
 from .search_engine import deep_search, filter_candidates, setup_logging
 
+_FONT = ("Segoe UI", 10)
+_FONT_BOLD = ("Segoe UI", 10, "bold")
+_FONT_TITLE = ("Segoe UI", 14, "bold")
+_FONT_MONO = ("Consolas", 10)
+
+_BG = "#f0f2f5"
+_FG = "#1a1a2e"
+_ACCENT = "#2563eb"
+_ACCENT_HOVER = "#1d4ed8"
+_SUCCESS = "#16a34a"
+_DANGER = "#dc2626"
+_WARN = "#ea580c"
+_BORDER = "#d4d4d8"
+_SURFACE = "#ffffff"
+
 
 class DeepSearchApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("Deep Search (Python)")
-        self.geometry("1000x800")
-        self.minsize(900, 650)
+        self.title("Deep Search")
+        self.geometry("1100x780")
+        self.minsize(960, 600)
+        self.configure(bg=_BG)
+
+        self._setup_styles()
 
         self.sites_path = tk.StringVar(value="python_deep_search/sites.json")
         self.query_var = tk.StringVar()
@@ -32,8 +51,8 @@ class DeepSearchApp(tk.Tk):
         self.playwright_var = tk.BooleanVar(value=True)
         self.show_log_var = tk.BooleanVar(value=False)
 
-        self.latest_results = {}
-        self.latest_candidates = {}
+        self.latest_results: dict = {}
+        self.latest_candidates: dict = {}
 
         self._log_queue: Queue = Queue()
         setup_logging(verbose=False, gui_queue=self._log_queue)
@@ -41,101 +60,155 @@ class DeepSearchApp(tk.Tk):
         self._build_ui()
         self._poll_log_queue()
 
+    def _setup_styles(self) -> None:
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure(".", font=_FONT, background=_BG, foreground=_FG)
+        style.configure("TFrame", background=_BG)
+        style.configure("TLabel", background=_BG, font=_FONT)
+        style.configure("TButton", font=_FONT, padding=(10, 5))
+        style.configure("Accent.TButton", background=_ACCENT, foreground="white")
+        style.map("Accent.TButton", background=[("active", _ACCENT_HOVER)])
+        style.configure("TLabelframe", background=_BG, font=_FONT_BOLD, borderwidth=1, relief="solid")
+        style.configure("TLabelframe.Label", background=_BG, font=_FONT_BOLD)
+        style.configure("TEntry", fieldbackground=_SURFACE, borderwidth=1, relief="solid")
+        style.configure("TSpinbox", fieldbackground=_SURFACE)
+        style.configure("TCheckbutton", background=_BG)
+        style.configure("TProgressbar", troughcolor=_BORDER, background=_ACCENT)
+
     def _build_ui(self) -> None:
-        frm = ttk.Frame(self, padding=10)
-        frm.pack(fill=tk.BOTH, expand=True)
+        hdr = tk.Frame(self, bg=_ACCENT, height=48)
+        hdr.pack(fill=tk.X)
+        hdr.pack_propagate(False)
+        tk.Label(
+            hdr, text="Deep Search", font=_FONT_TITLE, fg="white", bg=_ACCENT,
+        ).pack(side=tk.LEFT, padx=16, pady=10)
 
-        top = ttk.LabelFrame(frm, text="Параметры поиска", padding=10)
+        main = ttk.Frame(self)
+        main.pack(fill=tk.BOTH, expand=True, padx=12, pady=(12, 0))
+
+        self._build_search_panel(main)
+        self._build_result_area(main)
+        self._build_status_bar(main)
+
+        self.log_panel_visible = False
+        self._build_log_panel(main)
+
+    def _build_search_panel(self, parent: ttk.Frame) -> None:
+        top = ttk.LabelFrame(parent, text=" Параметры поиска ", padding=12)
         top.pack(fill=tk.X)
-
-        ttk.Label(top, text="JSON сайтов:").grid(row=0, column=0, sticky="w")
-        ttk.Entry(top, textvariable=self.sites_path, width=70).grid(row=0, column=1, sticky="ew", padx=6)
-        ttk.Button(top, text="Выбрать", command=self._pick_sites_file).grid(row=0, column=2)
-
-        ttk.Label(top, text="Запрос:").grid(row=1, column=0, sticky="w", pady=(8, 0))
-        ttk.Entry(top, textvariable=self.query_var, width=70).grid(row=1, column=1, columnspan=2, sticky="ew", padx=6, pady=(8, 0))
-
-        ttk.Label(top, text="Regex:").grid(row=2, column=0, sticky="w", pady=(8, 0))
-        ttk.Entry(top, textvariable=self.regex_var, width=70).grid(row=2, column=1, columnspan=2, sticky="ew", padx=6, pady=(8, 0))
-
-        opt = ttk.Frame(top)
-        opt.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(10, 0))
-
-        ttk.Label(opt, text="Max results:").pack(side=tk.LEFT)
-        ttk.Spinbox(opt, from_=1, to=100, textvariable=self.max_results_var, width=6).pack(side=tk.LEFT, padx=(6, 12))
-
-        ttk.Label(opt, text="Timeout:").pack(side=tk.LEFT)
-        ttk.Spinbox(opt, from_=3, to=120, textvariable=self.timeout_var, width=6).pack(side=tk.LEFT, padx=(6, 12))
-
-        ttk.Label(opt, text="Workers:").pack(side=tk.LEFT)
-        ttk.Spinbox(opt, from_=1, to=32, textvariable=self.workers_var, width=6).pack(side=tk.LEFT, padx=(6, 12))
-
-        ttk.Button(opt, text="Запустить поиск", command=self._start_search).pack(side=tk.RIGHT)
-
-        opt2 = ttk.Frame(top)
-        opt2.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(6, 0))
-
-        ttk.Checkbutton(opt2, text="Переходить по ссылкам", variable=self.follow_var).pack(side=tk.LEFT)
-        ttk.Label(opt2, text="Лимит:").pack(side=tk.LEFT, padx=(2, 0))
-        ttk.Spinbox(opt2, from_=1, to=20, textvariable=self.follow_limit_var, width=4).pack(side=tk.LEFT, padx=(2, 12))
-        ttk.Checkbutton(opt2, text="Playwright (JS-сайты)", variable=self.playwright_var).pack(side=tk.LEFT)
 
         top.columnconfigure(1, weight=1)
 
-        mid = ttk.Frame(frm)
-        mid.pack(fill=tk.BOTH, expand=True, pady=10)
+        ttk.Label(top, text="JSON сайтов:").grid(row=0, column=0, sticky="e", padx=(0, 8))
+        site_frame = ttk.Frame(top)
+        site_frame.grid(row=0, column=1, columnspan=2, sticky="ew")
+        ttk.Entry(site_frame, textvariable=self.sites_path).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(site_frame, text="…", width=3, command=self._pick_sites_file).pack(side=tk.LEFT, padx=(4, 0))
 
-        self.status_var = tk.StringVar(value="Готово")
-        ttk.Label(mid, textvariable=self.status_var).pack(anchor="w")
+        ttk.Label(top, text="Запрос:").grid(row=1, column=0, sticky="e", padx=(0, 8), pady=(10, 0))
+        ttk.Entry(top, textvariable=self.query_var).grid(row=1, column=1, columnspan=2, sticky="ew", pady=(10, 0))
 
-        self.progress = ttk.Progressbar(mid, mode="indeterminate")
-        self.progress.pack(fill=tk.X, pady=(2, 8))
+        ttk.Label(top, text="Regex:").grid(row=2, column=0, sticky="e", padx=(0, 8), pady=(8, 0))
+        ttk.Entry(top, textvariable=self.regex_var).grid(row=2, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
-        self.text = tk.Text(mid, wrap=tk.WORD, cursor="arrow")
-        self.text.pack(fill=tk.BOTH, expand=True)
+        opt = ttk.Frame(top)
+        opt.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(12, 0))
 
-        self.text.tag_configure("url", foreground="blue", underline=True)
+        ttk.Label(opt, text="Результатов:").pack(side=tk.LEFT)
+        ttk.Spinbox(opt, from_=1, to=100, textvariable=self.max_results_var, width=5).pack(side=tk.LEFT, padx=(4, 16))
+
+        ttk.Label(opt, text="Timeout:").pack(side=tk.LEFT)
+        ttk.Spinbox(opt, from_=3, to=120, textvariable=self.timeout_var, width=5).pack(side=tk.LEFT, padx=(4, 16))
+
+        ttk.Label(opt, text="Workers:").pack(side=tk.LEFT)
+        ttk.Spinbox(opt, from_=1, to=32, textvariable=self.workers_var, width=5).pack(side=tk.LEFT, padx=(4, 0))
+
+        ttk.Button(opt, text="▶  Поиск", style="Accent.TButton", command=self._start_search).pack(side=tk.RIGHT)
+
+        opt2 = ttk.Frame(top)
+        opt2.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+
+        ttk.Checkbutton(opt2, text="Обходить ссылки", variable=self.follow_var).pack(side=tk.LEFT)
+        ttk.Label(opt2, text="до").pack(side=tk.LEFT, padx=(4, 4))
+        ttk.Spinbox(opt2, from_=1, to=20, textvariable=self.follow_limit_var, width=4).pack(side=tk.LEFT)
+        ttk.Checkbutton(opt2, text="Playwright", variable=self.playwright_var).pack(side=tk.LEFT, padx=(16, 0))
+
+    def _build_result_area(self, parent: ttk.Frame) -> None:
+        self.pane = ttk.PanedWindow(parent, orient=tk.VERTICAL)
+        self.pane.pack(fill=tk.BOTH, expand=True, pady=(10, 4))
+
+        result_frame = ttk.Frame(self.pane)
+        self.pane.add(result_frame, weight=3)
+
+        self.text = tk.Text(
+            result_frame, wrap=tk.WORD, cursor="arrow",
+            font=_FONT_MONO, bg=_SURFACE, fg=_FG,
+            relief="flat", borderwidth=0, padx=12, pady=8,
+            selectbackground=_ACCENT, selectforeground="white",
+        )
+        scrollbar = ttk.Scrollbar(result_frame, orient=tk.VERTICAL, command=self.text.yview)
+        self.text.configure(yscrollcommand=scrollbar.set)
+        self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.text.tag_configure("url", foreground=_ACCENT, underline=True)
         self.text.tag_bind("url", "<Button-1>", self._on_url_click)
         self.text.tag_bind("url", "<Enter>", lambda _e: self.text.configure(cursor="hand2"))
         self.text.tag_bind("url", "<Leave>", lambda _e: self.text.configure(cursor="arrow"))
+        self.text.tag_configure("header", font=_FONT_BOLD, foreground=_ACCENT)
+        self.text.tag_configure("match", foreground=_SUCCESS)
+        self.text.tag_configure("error", foreground=_DANGER)
 
-        bottom = ttk.Frame(frm)
-        bottom.pack(fill=tk.X)
+    def _build_status_bar(self, parent: ttk.Frame) -> None:
+        bar = ttk.Frame(parent)
+        bar.pack(fill=tk.X, pady=(0, 6))
 
-        ttk.Button(bottom, text="Сохранить JSON", command=self._save_json).pack(side=tk.LEFT)
-        ttk.Button(bottom, text="Показать только кандидатов", command=self._show_candidates).pack(side=tk.LEFT, padx=8)
-        ttk.Button(bottom, text="Показать все", command=self._show_all).pack(side=tk.LEFT)
-        ttk.Button(bottom, text="Открыть все ссылки", command=self._open_all_links).pack(side=tk.RIGHT, padx=4)
-        ttk.Button(bottom, text="Открыть ссылки кандидатов", command=self._open_candidate_links).pack(side=tk.RIGHT)
+        self.status_var = tk.StringVar(value="Готов")
+        self.status_label = ttk.Label(bar, textvariable=self.status_var)
+        self.status_label.pack(side=tk.LEFT)
 
-        self._build_log_panel(frm)
+        self.progress = ttk.Progressbar(bar, mode="indeterminate", length=120)
+        self.progress.pack(side=tk.LEFT, padx=(12, 0))
+
+        ttk.Button(bar, text="Логи", width=5, command=self._toggle_log_panel).pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(bar, text="↗ Все ссылки", command=self._open_all_links).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(bar, text="↗ Кандидаты", command=self._open_candidate_links).pack(side=tk.RIGHT)
+        ttk.Button(bar, text="Кандидаты", command=self._show_candidates).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(bar, text="Все", command=self._show_all).pack(side=tk.RIGHT)
+        ttk.Button(bar, text="💾 JSON", command=self._save_json).pack(side=tk.RIGHT, padx=(0, 12))
 
     def _build_log_panel(self, parent: ttk.Frame) -> None:
-        self.log_frame = ttk.LabelFrame(parent, text="Логи", padding=5)
+        self.log_frame = ttk.LabelFrame(parent, text=" Логи ", padding=4)
 
-        toggle_frame = ttk.Frame(self.log_frame)
-        toggle_frame.pack(fill=tk.X)
+        log_toolbar = ttk.Frame(self.log_frame)
+        log_toolbar.pack(fill=tk.X)
+        ttk.Button(log_toolbar, text="Очистить", command=self._clear_log).pack(side=tk.RIGHT)
 
-        ttk.Checkbutton(toggle_frame, text="Показать логи", variable=self.show_log_var, command=self._toggle_log).pack(side=tk.LEFT)
-        ttk.Button(toggle_frame, text="Очистить", command=self._clear_log).pack(side=tk.RIGHT)
+        self.log_text = tk.Text(
+            self.log_frame, height=8, wrap=tk.WORD, state=tk.DISABLED,
+            font=_FONT_MONO, bg="#1e1e2e", fg="#cdd6f4",
+            relief="flat", borderwidth=0, padx=10, pady=6,
+        )
+        self.log_scroll = ttk.Scrollbar(self.log_frame, orient=tk.VERTICAL, command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=self.log_scroll.set)
 
-        self.log_text = tk.Text(self.log_frame, height=10, wrap=tk.WORD, state=tk.DISABLED)
-        self.log_scrollbar = ttk.Scrollbar(self.log_frame, orient=tk.VERTICAL, command=self.log_text.yview)
-        self.log_text.configure(yscrollcommand=self.log_scrollbar.set)
-        self.log_text.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
+        self.log_text.tag_configure("ERRO", foreground="#f38ba8")
+        self.log_text.tag_configure("WARN", foreground="#fab387")
+        self.log_text.tag_configure("INFO", foreground="#a6e3a1")
+        self.log_text.tag_configure("DEBU", foreground="#6c7086")
 
-        self.log_text.tag_configure("ERRO", foreground="red")
-        self.log_text.tag_configure("WARN", foreground="orange")
-        self.log_text.tag_configure("INFO", foreground="black")
-        self.log_text.tag_configure("DEBU", foreground="gray")
-
-    def _toggle_log(self) -> None:
-        if self.show_log_var.get():
-            self.log_frame.pack(fill=tk.BOTH, pady=(10, 0))
-            self.log_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        else:
+    def _toggle_log_panel(self) -> None:
+        if self.log_panel_visible:
             self.log_frame.pack_forget()
-            self.log_scrollbar.pack_forget()
+            self.log_text.pack_forget()
+            self.log_scroll.pack_forget()
+            self.log_panel_visible = False
+        else:
+            self.log_frame.pack(fill=tk.BOTH, before=self.status_label.master)
+            self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, pady=(4, 0))
+            self.log_scroll.pack(side=tk.RIGHT, fill=tk.Y, pady=(4, 0))
+            self.log_panel_visible = True
 
     def _clear_log(self) -> None:
         self.log_text.configure(state=tk.NORMAL)
@@ -160,26 +233,21 @@ class DeepSearchApp(tk.Tk):
         self.log_text.configure(state=tk.DISABLED)
 
     def _pick_sites_file(self) -> None:
-        path = filedialog.askopenfilename(title="Выберите JSON", filetypes=[("JSON", "*.json"), ("All", "*.*")])
+        path = filedialog.askopenfilename(
+            title="Выберите JSON", filetypes=[("JSON", "*.json"), ("All", "*.*")]
+        )
         if path:
             self.sites_path.set(path)
 
-    def _append(self, message: str) -> None:
-        self.text.insert(tk.END, message + "\n")
+    def _append(self, message: str, *tags: str) -> None:
+        self.text.insert(tk.END, message, tags if tags else ())
         self.text.see(tk.END)
-
-    def _append_url(self, url: str) -> None:
-        start = self.text.index("end-1c")
-        self.text.insert(tk.END, url)
-        end = self.text.index("end-1c")
-        self.text.tag_add("url", start, end)
 
     def _on_url_click(self, event: tk.Event) -> None:
         index = self.text.index(f"@{event.x},{event.y}")
         for tag in self.text.tag_names(index):
             if tag == "url":
-                url = self.text.get(f"{index} linestart", f"{index} lineend")
-                url = url.strip()
+                url = self.text.get(f"{index} linestart", f"{index} lineend").strip()
                 if url.startswith("http"):
                     webbrowser.open(url)
                 return
@@ -198,10 +266,12 @@ class DeepSearchApp(tk.Tk):
             return
 
         self.text.delete("1.0", tk.END)
-        self.status_var.set("Поиск выполняется...")
-        self.progress.start(10)
+        self.status_var.set("Поиск выполняется…")
+        self.progress.start(12)
 
-        thread = threading.Thread(target=self._search_worker, args=(query, regex_pattern), daemon=True)
+        thread = threading.Thread(
+            target=self._search_worker, args=(query, regex_pattern), daemon=True
+        )
         thread.start()
 
     def _search_worker(self, query: str, regex_pattern: str) -> None:
@@ -218,7 +288,7 @@ class DeepSearchApp(tk.Tk):
             )
 
             def progress(msg: str) -> None:
-                self.after(0, self._append, f"[done] {msg}")
+                self.after(0, self._append, f"  [ok] {msg}\n")
 
             results = deep_search(
                 sites=sites,
@@ -237,33 +307,46 @@ class DeepSearchApp(tk.Tk):
 
     def _render_results(self, results: dict, candidates: dict) -> None:
         self.progress.stop()
-        self.status_var.set(f"Готово. Кандидатов: {len(candidates)} / {len(results)}")
+        total_urls = sum(len(r.urls) for r in results.values())
+        self.status_var.set(
+            f"Готово — кандидатов: {len(candidates)}/{len(results)}, ссылок: {total_urls}"
+        )
 
         for site, data in results.items():
-            self.text.tag_configure(site + "_bold", font=("TkDefaultFont", 10, "bold"))
-            self._append("")
-            self.text.insert(tk.END, "─" * 70 + "\n")
-            self.text.insert(tk.END, f"  {site.upper()}  ", (site + "_bold",))
-            self._append(f"| status={data.status_code} | {data.elapsed_sec:.2f}s")
+            self._append("\n")
+            self.text.insert(tk.END, "─" * 90 + "\n")
+
+            status_icon = "✓" if data.found else "✗"
+            status_color = "match" if data.found else "error"
+            self.text.insert(tk.END, f"  {status_icon}  ", (status_color,))
+            self.text.insert(tk.END, site.upper(), ("header",))
+            self._append(f"  | {data.elapsed_sec:.2f}s  |  status={data.status_code}")
 
             if data.error:
-                self._append(f"  Ошибка: {data.error}")
+                self._append(f"  Ошибка: {data.error}", "error")
                 continue
 
             if not data.found:
                 self._append("  Ничего не найдено")
                 continue
 
-            self._append(f"  Совпадений: {len(data.matches)}")
-            for i, m in enumerate(data.matches[:5], 1):
-                self._append(f"    {i}. {m.text}")
+            if data.matches:
+                self._append(f"  Совпадений: {len(data.matches)}")
+                for i, m in enumerate(data.matches[:5], 1):
+                    self._append(f"    {i}. {m.text}")
 
             if data.urls:
                 self._append(f"  Ссылки ({len(data.urls)}):")
                 for i, u in enumerate(data.urls, 1):
-                    self.text.insert(tk.END, f"    {i}. ")
+                    self._append(f"    {i}. ", )
                     self._append_url(u)
                     self._append("")
+
+    def _append_url(self, url: str) -> None:
+        start = self.text.index("end-1c")
+        self.text.insert(tk.END, url)
+        end = self.text.index("end-1c")
+        self.text.tag_add("url", start, end)
 
     def _on_error(self, error_text: str) -> None:
         self.progress.stop()
@@ -313,12 +396,13 @@ class DeepSearchApp(tk.Tk):
             return
 
         opened = 0
-        for site, data in results.items():
+        for _site, data in results.items():
             if not data.urls:
                 continue
-            for url in data.urls[:3]:
+            for url in data.urls:
                 webbrowser.open(url)
                 opened += 1
+                _time.sleep(0.3)
 
         if opened == 0:
             messagebox.showinfo("Нет ссылок", "Ссылок для открытия не найдено")
