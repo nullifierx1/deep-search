@@ -53,9 +53,6 @@ def _build_search_url(base_url: str, template: str, query: str) -> str:
     return template.format(base=base_url.rstrip("/"), query=quote_plus(query))
 
 
-_BRACKET_RE = _re.compile(r"\[([^\]]*)\]")
-
-
 def _expand_query(raw: str) -> list[str]:
     alternatives = [a.strip() for a in raw.split("|")]
     results: list[str] = []

@@ -2,9 +2,6 @@ from __future__ import annotations
 
 import html
 import re
-from urllib.parse import urljoin
-
-
 from urllib.parse import urljoin, urlparse
 
 LINK_RE = re.compile(r'href=["\']([^"\']+)["\']', re.IGNORECASE)
@@ -152,7 +149,7 @@ def extract_regex_matches(page_html: str, regex_pattern: str, max_results: int =
     return cleaned
 
 
-_QUERY_META_RE = re.compile(r"[\[\|]")
+_QUERY_META_RE = re.compile(r"\[")
 
 
 def _query_word_to_pattern(word: str) -> str:

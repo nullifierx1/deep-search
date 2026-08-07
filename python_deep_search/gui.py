@@ -5,7 +5,6 @@ import re
 import threading
 import tkinter as tk
 import webbrowser
-from pathlib import Path
 from queue import Queue, Empty
 from tkinter import filedialog, messagebox, ttk
 
@@ -125,6 +124,11 @@ class DeepSearchApp(tk.Tk):
         self.log_text.configure(yscrollcommand=self.log_scrollbar.set)
         self.log_text.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
 
+        self.log_text.tag_configure("ERRO", foreground="red")
+        self.log_text.tag_configure("WARN", foreground="orange")
+        self.log_text.tag_configure("INFO", foreground="black")
+        self.log_text.tag_configure("DEBU", foreground="gray")
+
     def _toggle_log(self) -> None:
         if self.show_log_var.get():
             self.log_frame.pack(fill=tk.BOTH, pady=(10, 0))
@@ -148,16 +152,12 @@ class DeepSearchApp(tk.Tk):
         self.after(250, self._poll_log_queue)
 
     def _append_log(self, record: logging.LogRecord) -> None:
-        self.log_text.configure(state=tk.NORMAL)
         level = record.levelname[:4]
         msg = record.getMessage()
-        self.log_text.insert(tk.END, f"[{level}] {msg}\n")
+        self.log_text.configure(state=tk.NORMAL)
+        self.log_text.insert(tk.END, f"[{level}] {msg}\n", (level,))
         self.log_text.see(tk.END)
         self.log_text.configure(state=tk.DISABLED)
-
-        level_colors = {"ERRO": "red", "WARN": "orange", "INFO": "black", "DEBU": "gray"}
-        tag_name = f"log_{level}"
-        self.log_text.tag_configure(tag_name, foreground=level_colors.get(level, "black"))
 
     def _pick_sites_file(self) -> None:
         path = filedialog.askopenfilename(title="Выберите JSON", filetypes=[("JSON", "*.json"), ("All", "*.*")])
