@@ -13,5 +13,15 @@
   "/topalbums",
   "/topfiles",
   "/topimages",
-  "/topvideos"
+  "/topvideos",
+  "/categories",
+  "/de", 
+  "/fr",
+  "/es",
+  "/it",
+  "/pt",
+  "/zh",
+  "/ja",
+  "/ru",
+  "/tr"
 ]

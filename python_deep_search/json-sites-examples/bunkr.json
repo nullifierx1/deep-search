@@ -12,5 +12,47 @@
             "enabled": false,
             "collect_child_links": false
         }
+    },
+    "coomer": {
+        "base_url": "https://official.coomer.com.co",
+        "search_template": "{base}/search/{query}",
+        "use_full_path": false,
+        "params": null,
+        "follow": {
+            "enabled": false,
+            "collect_child_links": false
+        },
+        "link_rules": {
+            "search_strict_query": true,
+            "exclude_url_patterns": [
+                "^https://[^/]+/(de|ja|fr|es|it|pt|zh|ru|tr)/search/"
+            ]
+        }
+    },
+    "asmr1": {
+        "base_url": "https://www.asmr1.cc",
+        "search_template": "{base}/?person={query}",
+        "use_full_path": false,
+        "params": null,
+        "follow": {
+            "enabled": false,
+            "collect_child_links": false
+        }
+    },
+    "asmrfree": {
+        "base_url": "https://asmrfree.com/",
+        "search_template": "{base}/?s={query}",
+        "use_full_path": false,
+        "params": null,
+        "follow": {
+            "enabled": true,
+            "collect_child_links": false
+        },
+        "path_builder": {
+            "pattern": "{query}/page/{n}",
+            "start": 1,
+            "end": 8,
+            "step": 1
+        }
     }
 }

@@ -1,48 +1,64 @@
 {
-  "turbo": {
-    "base_url": "https://turbo.cr",
-    "search_template": "{base}/w/index.php?search={query}",
-    "use_full_path": false,
-    "params": null
-  },
-  "asmr1": {
-    "base_url": "https://www.asmr1.cc",
-    "search_template": "{base}/search?q={query}",
-    "use_full_path": false,
-    "params": null
-  },
-  "91prna": {
-    "base_url": "https://91porna.com",
-    "search_template": "{base}/search?q={query}",
-    "use_full_path": false,
-    "params": null
-  },
-  "jable": {
-    "base_url": "https://jable.tv",
-    "search_template": "{base}/ru/search/?q={query}",
-    "use_full_path": false,
-    "params": null
-  },
-  "eporner": {
-    "base_url": "https://www.eporner.com",
-    "search_template": "{base}/search/?q={query}",
-    "use_full_path": false,
-    "params": null
-  },
-  "bunkr": {
-    "base_url": "https://balbums.st",
-    "search_template": "{base}/?search={query}",
-    "use_full_path": false,
-    "params": {
-      "mode": "broad",
-      "per": "40",
-      "sort": "latest"
+    "bunkr": {
+        "base_url": "https://balbums.st",
+        "search_template": "{base}/?search={query}",
+        "use_full_path": false,
+        "params": {
+            "mode": "broad",
+            "per": "100",
+            "sort": "latest"
+        },
+        "follow": {
+            "enabled": false,
+            "collect_child_links": false
+        }
+    },
+    "coomer": {
+        "base_url": "https://official.coomer.com.co",
+        "search_template": "{base}/search/{query}",
+        "use_full_path": false,
+        "params": null,
+        "follow": {
+            "enabled": false,
+            "collect_child_links": false
+        },
+        "link_rules": {
+            "search_strict_query": true,
+            "exclude_url_patterns": [
+                "^https://[^/]+/(de|ja|fr|es|it|pt|zh|ru|tr)/search/"
+            ]
+        }
+    },
+    "asmr1": {
+        "base_url": "https://www.asmr1.cc",
+        "search_template": "{base}/?s={query}",
+        "use_full_path": false,
+        "params": null,
+        "follow": {
+            "enabled": false,
+            "collect_child_links": false
+        },
+        "link_rules": {
+            "search_strict_query": true,
+            "exclude_url_patterns": [
+                "^https://[^/]+/page/[2-9][0-9]*/\\?.*$"
+            ]
+        }
+    },
+    "asmrfree": {
+        "base_url": "https://asmrfree.com/",
+        "search_template": "{base}/?s={query}",
+        "use_full_path": false,
+        "params": null,
+        "follow": {
+            "enabled": false,
+            "collect_child_links": false
+        },
+        "path_builder": {
+            "pattern": "{query}/page/{n}",
+            "start": 1,
+            "end": 8,
+            "step": 1
+        }
     }
-  },
-  "coomer": {
-    "base_url": "https://official.coomer.com.co",
-    "search_template": "{base}/results?search_query={query}",
-    "use_full_path": false,
-    "params": null
-  }
 }
