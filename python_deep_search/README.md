@@ -1,32 +1,12 @@
 # Deep Search
 
-Deep Search - локальный Python-инструмент для поиска по набору сайтов. Есть GUI на Tkinter/ttk и CLI. Программа открывает поисковые страницы сайтов, извлекает исходные ссылки из выдачи, при необходимости переходит по ним, собирает совпадения по query/regex и сохраняет результат в JSON.
+Deep Search - локальный инструмент для поиска по списку сайтов. Он открывает поисковые страницы, вытаскивает ссылки первого уровня, при необходимости переходит по ним, ищет совпадения по query/regex и сохраняет результат в JSON.
 
-## Возможности
-
-- Поиск сразу по нескольким сайтам из JSON-конфига.
-- GUI-приложение с параметрами поиска, таблицей сайтов, деталями результата и логами.
-- CLI для скриптового запуска.
-- Поддержка обычного query и простого расширения вариантов через `|` и `[...]`.
-- Regex-извлечение совпадений из страниц.
-- Двухуровневый вывод:
-  - `search-level links` - ссылки, найденные прямо на странице поиска сайта;
-  - `followed pages` - что найдено после перехода по этим ссылкам.
-- Строгая фильтрация search-level ссылок: на первом уровне остаются только ссылки, связанные с запросом.
-- Фильтрация навигационного шума через редактируемый `navigation_noise.json`.
-- Кеш результатов на 30 дней, кеш логов на 1 день, сохранение последнего выбранного sites JSON.
-- Playwright fallback для JS-страниц, если установлен Playwright.
-- Экспорт результатов в JSON.
+Главная идея: сначала видеть исходные ссылки из поисковой выдачи сайта, а уже отдельно - то, что найдено после перехода по этим ссылкам.
 
 ## Быстрый Старт
 
-В этом окружении короткие команды `python` и `python3` могут указывать не на рабочий Python. Проверенный интерпретатор:
-
-```powershell
-& "C:\Users\1\AppData\Local\Programs\Python\Python312\python.exe" -m python_deep_search.main --mode gui
-```
-
-Если PATH настроен нормально:
+GUI:
 
 ```bash
 python -m python_deep_search.main --mode gui
@@ -34,18 +14,19 @@ python -m python_deep_search.main --mode gui
 
 CLI:
 
-```powershell
-& "C:\Users\1\AppData\Local\Programs\Python\Python312\python.exe" -m python_deep_search.main --mode cli "python asyncio"
+```bash
+python -m python_deep_search.main --mode cli "search query"
 ```
 
-Через Makefile:
+Запуск с конкретным списком сайтов:
 
 ```bash
-make gui
-make cli QUERY="python asyncio"
+python -m python_deep_search.main --mode cli "search query" --sites python_deep_search/json-sites-examples/sites.json
 ```
 
-## Установка Зависимостей
+Если в окружении несколько Python, используйте тот интерпретатор, в котором установлены зависимости проекта.
+
+## Установка
 
 Минимально:
 
@@ -53,7 +34,7 @@ make cli QUERY="python asyncio"
 pip install requests pytest
 ```
 
-Для JS-страниц:
+Для сайтов, где HTML собирается JavaScript:
 
 ```bash
 pip install playwright
@@ -66,43 +47,50 @@ playwright install chromium
 pip install ttkbootstrap
 ```
 
-Если `ttkbootstrap` установлен, GUI попробует использовать тему `flatly`. Если нет - приложение работает на стандартном `ttk`.
-
 ## GUI
 
-Запуск:
-
-```bash
-python -m python_deep_search.main --mode gui
-```
-
-Основные элементы:
+В левой панели задаются параметры поиска:
 
 - `Query` - поисковый запрос.
-- `Regex` - необязательный regex для извлечения точных совпадений.
+- `Regex` - необязательный regex для точного извлечения совпадений со страниц.
 - `Sites JSON` - файл со списком сайтов.
-- `Browser` - необязательное имя браузера для открытия ссылок. Пусто = системный браузер; можно указывать `chrome`, `edge`, `firefox`, `windows-default` или полный путь вида `"C:\Program Files\Google\Chrome\Application\chrome.exe" %s`.
-- `Results` - максимум совпадений на сайт.
-- `Links` - максимум search-level ссылок на сайт.
-- `Timeout` - timeout HTTP-запроса в секундах.
-- `Workers` - число параллельных сайтов.
-- `Follow limit` - сколько search-level ссылок обходить внутри одного сайта.
-- `Follow links` - включить переходы по найденным search-level ссылкам.
-- `Use Playwright` - использовать Playwright fallback для JS-страниц.
-- `Use cache` - брать и сохранять результаты в кеш.
-- `Verbose logs` - более подробные логи.
+- `Browser` - браузер для открытия ссылок: `chrome`, `edge`, `firefox`, `windows-default` или пусто для системного браузера.
+- `Results` - максимум текстовых совпадений на сайт.
+- `Links` - максимум ссылок первого уровня на сайт.
+- `Timeout` - timeout HTTP-запроса.
+- `Workers` - сколько сайтов обрабатывать параллельно.
+- `Follow limit` - сколько search-level ссылок обходить вторым уровнем.
+- `Follow links` - включить переходы по найденным ссылкам.
+- `Use Playwright` - пробовать JS-rendering для сайтов со слабым HTML.
+- `Use cache` - использовать кеш результатов.
+- `Verbose logs` - подробные логи.
 
-Правая часть GUI:
+GUI запоминает последние значения полей, лимитов, чекбоксов, выбранного view, sites JSON и browser. Настройки сохраняются при запуске поиска, открытии ссылок, выборе файла и закрытии окна.
 
-- Таблица показывает только сайты, у которых есть search-level ссылки.
-- `Search URL` - URL поисковой страницы.
-- `Search links` - сколько исходных ссылок найдено на странице поиска.
-- `Followed` - сколько ссылок было обойдено.
-- В деталях выбранного сайта сначала идут `Search results`, затем `Followed pages`.
+Правая часть:
+
+- таблица показывает сайты, у которых есть search-level ссылки;
+- `Search results` в деталях - исходные ссылки, найденные на странице поиска;
+- `Followed pages` - результаты переходов по search-level ссылкам;
+- `Open links` открывает видимые ссылки;
+- `Open selected` открывает ссылки выбранного сайта;
+- `Save JSON` сохраняет результаты.
+
+Для Chrome в поле `Browser` обычно достаточно:
+
+```text
+chrome
+```
+
+Если короткое имя не найдено, можно указать полный путь:
+
+```text
+"C:\Program Files\Google\Chrome\Application\chrome.exe" %s
+```
 
 ## CLI
 
-Базовый запуск:
+Обычный поиск:
 
 ```bash
 python -m python_deep_search.main --mode cli "postgres"
@@ -114,31 +102,19 @@ python -m python_deep_search.main --mode cli "postgres"
 python -m python_deep_search.main --mode cli "python asyncio" --regex "\basync\w*\b"
 ```
 
-С выбором sites JSON:
-
-```bash
-python -m python_deep_search.main --mode cli "needle" --sites python_deep_search/json-sites-examples/bunkr.json
-```
-
-Открыть найденные search-level ссылки в браузере:
+Открыть найденные search-level ссылки:
 
 ```bash
 python -m python_deep_search.main --mode cli "needle" --open
 ```
 
-Открыть ссылки в конкретном браузере:
-
-```bash
-python -m python_deep_search.main --mode cli "needle" --open --browser firefox
-```
-
-Для Google Chrome на Windows обычно достаточно:
+Открыть ссылки в Chrome:
 
 ```bash
 python -m python_deep_search.main --mode cli "needle" --open --browser chrome
 ```
 
-Отключить follow:
+Отключить переходы по найденным ссылкам:
 
 ```bash
 python -m python_deep_search.main --mode cli "needle" --no-follow
@@ -156,7 +132,7 @@ python -m python_deep_search.main --mode cli "needle" --no-playwright
 python -m python_deep_search.main --mode cli "needle" --no-cache
 ```
 
-Все основные параметры:
+Основные параметры:
 
 ```bash
 python -m python_deep_search.main --mode cli "needle" \
@@ -167,12 +143,12 @@ python -m python_deep_search.main --mode cli "needle" \
   --workers 6 \
   --timeout 15 \
   --follow-limit 5 \
-  --browser firefox \
+  --browser chrome \
   --out python_deep_search/results.json \
   --verbose
 ```
 
-## Формат Sites JSON
+## Sites JSON
 
 Минимальный формат:
 
@@ -220,17 +196,17 @@ python -m python_deep_search.main --mode cli "needle" \
 Поля:
 
 - `base_url` - базовый URL сайта.
-- `search_template` - шаблон search URL.
-- `use_full_path`:
-  - `false` - в шаблон можно подставлять `{base}` и `{query}`;
-  - `true` - `search_template` используется как полный URL, подставляется только `{query}`.
-- `params` - дополнительные query-параметры. Можно объектом или строкой.
-- `path_builder` - генератор страниц без search endpoint.
+- `search_template` - шаблон поисковой страницы.
+- `use_full_path` - если `true`, `search_template` считается полным URL и использует только `{query}`.
+- `params` - дополнительные query-параметры.
+- `path_builder` - перебор страниц без search endpoint.
 - `link_rules` - правила отбора ссылок.
-- `dedupe` - правила построения ключа дедупликации URL.
+- `dedupe` - правила дедупликации URL.
 - `follow` - настройки второго уровня обхода.
 
-### link_rules
+## link_rules
+
+`link_rules` управляет тем, какие URL попадут в search-level результат.
 
 ```json
 {
@@ -240,11 +216,63 @@ python -m python_deep_search.main --mode cli "needle" \
 }
 ```
 
-- `search_strict_query`: если `true`, search-level берёт только ссылки, связанные с query. Для сайтов, где результаты можно надёжно определить через URL-паттерны, можно поставить `false` и использовать `include_url_patterns`.
-- `include_url_patterns`: regex-список URL, которые разрешено брать.
-- `exclude_url_patterns`: regex-список URL, которые нужно отбросить.
+- `search_strict_query`: если `true`, ссылка должна быть связана с query через URL, текст ссылки, `title`, `aria-label` или `img alt`.
+- `include_url_patterns`: если список не пустой, берутся только URL, которые совпали хотя бы с одним regex.
+- `exclude_url_patterns`: URL отбрасывается, если совпал хотя бы с одним regex.
 
-### dedupe
+### Кейс: всплывают поиски других языков
+
+Иногда сайт отдаёт ссылки вида:
+
+```text
+https://example.com/de/search/query
+https://example.com/ja/search/query
+```
+
+Не добавляйте это в `navigation_noise.json`: он работает по точному path и лучше подходит для стабильной навигации вроде `/topfiles`.
+
+Для языковых search-страниц используйте `exclude_url_patterns` в конкретном сайте:
+
+```json
+{
+  "example": {
+    "base_url": "https://example.com",
+    "search_template": "{base}/search/{query}",
+    "link_rules": {
+      "search_strict_query": true,
+      "exclude_url_patterns": [
+        "^https://example\\.com/(de|ja|fr|es|it|pt|zh|ru|tr)/search/"
+      ]
+    }
+  }
+}
+```
+
+Если домен может меняться:
+
+```json
+"exclude_url_patterns": [
+  "^https://[^/]+/(de|ja|fr|es|it|pt|zh|ru|tr)/search/"
+]
+```
+
+Если нужен только английский раздел, лучше явно разрешить нужный path:
+
+```json
+"link_rules": {
+  "search_strict_query": false,
+  "include_url_patterns": [
+    "^https://example\\.com/en/articles/.+"
+  ],
+  "exclude_url_patterns": [
+    "^https://example\\.com/(de|ja|fr|es|it|pt|zh|ru|tr)/"
+  ]
+}
+```
+
+## dedupe
+
+`dedupe` не меняет выводимый URL. Он строит canonical key, чтобы не показывать одну и ту же страницу несколько раз.
 
 ```json
 {
@@ -264,18 +292,17 @@ python -m python_deep_search.main --mode cli "needle" \
 }
 ```
 
-Эти настройки не меняют выводимый URL, а только canonical key для дедупликации.
+Полезные случаи:
 
-- `strip_fragment`: считать `/page#section` и `/page` одним URL.
-- `strip_www`: считать `www.example.com` и `example.com` одним хостом.
-- `strip_trailing_slash`: считать `/page/` и `/page` одним путём.
-- `strip_suffixes`: убрать suffix из canonical key, например `.html`.
-- `path_rewrites`: regex-переписывание пути перед дедупликацией.
-- `ignore_query`: не учитывать query-параметры в canonical key.
-- `lowercase_host`: привести host к lower-case.
-- `lowercase_path`: привести path к lower-case.
+- `strip_fragment`: `/page#section` и `/page` считаются одним URL.
+- `strip_www`: `www.example.com` и `example.com` считаются одним host.
+- `strip_suffixes`: удобно для `.html`.
+- `path_rewrites`: удобно, когда сайт отдаёт одну страницу в двух видах, например `/w/cpp/vector` и `/cpp/vector`.
+- `ignore_query`: удобно, когда tracking/query параметры создают дубли.
 
-### follow
+## follow
+
+`follow` управляет переходами по search-level ссылкам.
 
 ```json
 {
@@ -284,10 +311,65 @@ python -m python_deep_search.main --mode cli "needle" \
 }
 ```
 
-- `enabled`: если `false`, сайт не будет открывать search-level ссылки вторым уровнем даже при включённом глобальном `Follow links` / без `--no-follow`. Полезно для сайтов, которые часто редиректят на шумные или нежелательные домены.
-- `collect_child_links`: если `false`, followed page всё ещё проверяется на matches, но внутренние ссылки этой страницы не попадают в вывод. Это полезно для справочников и wiki-like сайтов, где на странице много боковой навигации.
+- `enabled: false` - сайт не будет открывать найденные ссылки вторым уровнем, даже если глобальный `Follow links` включён.
+- `collect_child_links: false` - страница будет проверяться на matches, но её внутренние ссылки не попадут в вывод.
 
-Пример Bunkr-like конфига:
+### Кейс: сайт редиректит на шумные домены
+
+Для таких сайтов отключайте follow на уровне сайта:
+
+```json
+{
+  "noisy": {
+    "base_url": "https://example.com",
+    "search_template": "{base}/?search={query}",
+    "follow": {
+      "enabled": false,
+      "collect_child_links": false
+    }
+  }
+}
+```
+
+Так вы увидите только исходные search-level ссылки, но программа не будет переходить дальше.
+
+## navigation_noise.json
+
+`navigation_noise.json` - глобальный список точных path, которые считаются навигационным шумом:
+
+```json
+[
+  "/",
+  "/live",
+  "/topalbums",
+  "/topfiles",
+  "/topimages",
+  "/topvideos"
+]
+```
+
+Подходит для:
+
+- `/login`
+- `/register`
+- `/topfiles`
+- `/topimages`
+- `/privacy`
+
+Не подходит для:
+
+- `/de/search/query`
+- `/ja/search/query`
+- сложных regex-условий;
+- правил только для одного сайта.
+
+Для таких случаев используйте `link_rules.exclude_url_patterns` внутри конкретного сайта.
+
+После изменения фильтров запускайте поиск без кеша или выключайте `Use cache`, иначе можно увидеть старые результаты.
+
+## Типовые Конфиги
+
+### Bunkr-like сайт
 
 ```json
 {
@@ -300,6 +382,12 @@ python -m python_deep_search.main --mode cli "needle" \
       "per": "100",
       "sort": "latest"
     },
+    "link_rules": {
+      "search_strict_query": true,
+      "exclude_url_patterns": [
+        "^https://[^/]+/(de|ja|fr|es|it|pt|zh|ru|tr)/search/"
+      ]
+    },
     "follow": {
       "enabled": false,
       "collect_child_links": false
@@ -308,7 +396,7 @@ python -m python_deep_search.main --mode cli "needle" \
 }
 ```
 
-Пример cppreference-like конфига с дедупликацией:
+### Cправочник / wiki-like сайт
 
 ```json
 {
@@ -349,202 +437,59 @@ python -m python_deep_search.main --mode cli "needle" \
 }
 ```
 
-## Path Builder
-
-Если у сайта нет поиска, но есть страницы вида `/page/1`, `/page/2`, можно использовать `path_builder`:
-
-```json
-{
-  "example_path_builder": {
-    "base_url": "https://example.com",
-    "path_builder": {
-      "pattern": "/page/{n}",
-      "start": 1,
-      "end": 5,
-      "step": 1
-    }
-  }
-}
-```
-
-`pattern` может содержать `{n}` и `{query}`.
-
 ## Query Синтаксис
 
-Обычный текст:
+Обычный запрос:
 
 ```text
 python asyncio
 ```
 
-Альтернативы через `|`:
+Альтернативы:
 
 ```text
 python | asyncio
 ```
 
-Варианты символов через `[...]`:
+Варианты символов:
 
 ```text
 [Pp]ython
 gr[ae]y
 ```
 
-Для поисковых движков такие запросы раскрываются в несколько буквальных запросов:
+Это раскрывается в несколько буквальных запросов:
 
 - `[Pp]ython` -> `Python`, `python`
 - `gr[ae]y` -> `gray`, `grey`
 - `[Pp]ython | ghostepython` -> `Python`, `python`, `ghostepython`
 
-Для локального извлечения сниппетов `[...]` используется как простой regex-паттерн.
-
-## Regex
-
-`--regex` или поле `Regex` в GUI применяются к очищенному тексту страницы.
-
-Пример:
-
-```bash
-python -m python_deep_search.main --mode cli "asyncio" --regex "\basync\s+def\b"
-```
-
-Пустой regex допустим и не создаёт ложных совпадений.
-
-## Как Устроен Результат
-
-Модель результата:
-
-```text
-SiteResult
-  site_name
-  base_url
-  search_url
-  found
-  matches
-  urls
-  followed
-  status_code
-  elapsed_sec
-  error
-```
-
-Главное:
-
-- `urls` - только search-level ссылки, найденные на странице поиска.
-- `followed` - результаты переходов по `urls`.
-- `matches` - агрегированные совпадения по сайту.
-
-`FollowResult`:
-
-```text
-FollowResult
-  source_url
-  matches
-  urls
-  error
-```
-
-В GUI это отображается так:
-
-```text
-Search results
-  1. https://site/result-1
-  2. https://site/result-2
-
-Followed pages
-  1. https://site/result-1
-     match [60] ...
-     link: https://site/child
-```
-
-## Фильтрация Ссылок
-
-На search-level включается строгая фильтрация:
-
-- ссылка должна быть связана с query;
-- query ищется в URL, тексте ссылки, `title`, `aria-label`, `img alt`;
-- если на search-странице есть только навигация, сайт пропускается на первом уровне.
-
-Для всех уровней дополнительно отбрасываются:
-
-- технические ресурсы (`.css`, `.js`, `.png`, `.svg`, `.json`, шрифты и т.п.);
-- служебные wiki URL (`/w/load.php`, `/w/api.php`, `/w/index.php`);
-- навигационные пути из `navigation_noise.json`.
-
-## navigation_noise.json
-
-Файл:
-
-```text
-python_deep_search/navigation_noise.json
-```
-
-Формат:
-
-```json
-[
-  "/",
-  "/live",
-  "/topalbums",
-  "/topfiles",
-  "/topimages",
-  "/topvideos"
-]
-```
-
-Если в GUI или CLI появился повторяющийся навигационный шум, добавьте путь в этот список. Можно писать с `/` или без него, код нормализует путь.
-
-Пример:
-
-```json
-[
-  "/",
-  "/live",
-  "/topalbums",
-  "/topfiles",
-  "/topimages",
-  "/topvideos",
-  "/popular"
-]
-```
-
-После изменения списка лучше запустить поиск с отключённым кешем или изменить query, потому что старые результаты могли быть сохранены.
-
 ## Кеш
 
-Кеш хранится в:
+Кеш хранится в `python_deep_search/.cache/`.
 
-```text
-python_deep_search/.cache/
-```
+- `results_cache.json` - результаты поиска.
+- `settings.json` - настройки GUI, последний sites JSON, выбранный браузер.
+- GUI-настройки хранятся в `settings.json` с префиксом `gui_`.
+- `log_cache.json` - логи.
 
-Файлы:
-
-- `results_cache.json` - результаты поиска, TTL 30 дней.
-- `settings.json` - настройки, включая последний выбранный sites JSON.
-- `log_cache.json` - GUI/CLI логи, TTL 1 день.
-
-Кеш-ключ учитывает:
-
-- query;
-- regex;
-- лимиты;
-- follow настройки;
-- Playwright;
-- sites config;
-- schema version.
-
-CLI: отключить кеш:
+Отключить кеш в CLI:
 
 ```bash
 python -m python_deep_search.main --mode cli "needle" --no-cache
 ```
 
-GUI: выключить `Use cache`.
+В GUI выключите `Use cache`.
+
+Очистить только результаты поиска, не трогая settings:
+
+```bash
+make clean-cache-results
+```
 
 ## Makefile
 
-Команды:
+Основные команды:
 
 ```bash
 make gui
@@ -571,82 +516,52 @@ OUT="python_deep_search/results.json"
 VERBOSE=1
 ```
 
-## Структура Проекта
-
-```text
-python_deep_search/
-  __init__.py
-  main.py
-  cli.py
-  gui.py
-  models.py
-  search_engine.py
-  extractors.py
-  config.py
-  cache.py
-  output.py
-  navigation_noise.json
-  json-sites-examples/
-    sites.json
-    bunkr.json
-    lk-sites.json
-tests/
-  test_cache.py
-  test_cli.py
-  test_extractors.py
-  test_gui_links.py
-  test_search_engine.py
-```
-
-## Проверка
-
-В этом окружении:
-
-```powershell
-& "C:\Users\1\AppData\Local\Programs\Python\Python312\python.exe" -m pytest
-& "C:\Users\1\AppData\Local\Programs\Python\Python312\python.exe" -m compileall -q python_deep_search tests
-```
-
-Если Python настроен в PATH:
-
-```bash
-python -m pytest
-python -m compileall -q python_deep_search tests
-```
-
 ## Troubleshooting
-
-### `python` запускает MySQL Workbench Python
-
-Используйте полный путь:
-
-```powershell
-& "C:\Users\1\AppData\Local\Programs\Python\Python312\python.exe" -m python_deep_search.main --mode gui
-```
-
-Или поправьте PATH так, чтобы `C:\Users\1\AppData\Local\Programs\Python\Python312\` был раньше MySQL/WindowsApps.
-
-### `python3` ведёт в Windows Store
-
-Это Windows App Execution Alias. Отключите alias для `python.exe` / `python3.exe` в настройках Windows или используйте полный путь к Python.
 
 ### В GUI виден старый шум
 
+Чаще всего это кеш. Выключите `Use cache` или выполните:
+
+```bash
+make clean-cache-results
+```
+
+### `navigation_noise.json` не фильтрует `/de/search/query`
+
+Это ожидаемо: `navigation_noise.json` проверяет точные path. Для `/de/search/query` используйте `link_rules.exclude_url_patterns`.
+
+### Слишком много дублей
+
+Настройте `dedupe`: обычно помогают `strip_fragment`, `strip_www`, `strip_trailing_slash`, `strip_suffixes` и `path_rewrites`.
+
+### Search-level пустой, хотя сайт что-то нашёл
+
 Проверьте:
 
-- выключен ли `Use cache`;
-- добавлен ли путь в `navigation_noise.json`;
-- относится ли шум к search-level или к followed pages.
+- не слишком ли строгий `search_strict_query`;
+- нужен ли `include_url_patterns`;
+- не отбрасывает ли URL `exclude_url_patterns`;
+- не лежит ли старый результат в кеше.
 
-После изменения фильтров лучше выполнить поиск с `--no-cache` или выключенным `Use cache`.
+### Сайт отдаёт пустой HTML
 
-### JS-сайт отдаёт пустую страницу
-
-Установите Playwright:
+Установите Playwright и включите `Use Playwright`:
 
 ```bash
 pip install playwright
 playwright install chromium
 ```
 
-И не выключайте `Use Playwright`.
+### Open links не открывает Chrome
+
+В GUI поле `Browser`:
+
+```text
+chrome
+```
+
+Если не сработало:
+
+```text
+"C:\Program Files\Google\Chrome\Application\chrome.exe" %s
+```

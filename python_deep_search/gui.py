@@ -34,6 +34,7 @@ _BORDER = "#d7dce3"
 _LOG_BG = "#111827"
 _LOG_FG = "#d1d5db"
 _OPTIONAL_BOOTSTRAP_THEME = "flatly"
+_GUI_SETTING_PREFIX = "gui_"
 
 
 class DeepSearchApp(tk.Tk):
@@ -54,6 +55,7 @@ class DeepSearchApp(tk.Tk):
         self._build_ui()
         self._poll_log_queue()
         self._load_cached_logs()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _init_state(self) -> None:
         last_sites = cache.get_setting("last_sites", DEFAULT_SITES_PATH)
@@ -61,19 +63,19 @@ class DeepSearchApp(tk.Tk):
             last_sites = DEFAULT_SITES_PATH
 
         self.sites_path = tk.StringVar(value=last_sites)
-        self.query_var = tk.StringVar()
-        self.regex_var = tk.StringVar()
-        self.max_results_var = tk.IntVar(value=10)
-        self.max_links_var = tk.IntVar(value=100)
-        self.timeout_var = tk.IntVar(value=15)
-        self.workers_var = tk.IntVar(value=6)
-        self.follow_var = tk.BooleanVar(value=True)
-        self.follow_limit_var = tk.IntVar(value=5)
-        self.playwright_var = tk.BooleanVar(value=True)
-        self.verbose_var = tk.BooleanVar(value=False)
-        self.cache_var = tk.BooleanVar(value=True)
+        self.query_var = tk.StringVar(value=self._cached_str("query", ""))
+        self.regex_var = tk.StringVar(value=self._cached_str("regex", ""))
+        self.max_results_var = tk.IntVar(value=self._cached_int("max_results", 10, 1, 100))
+        self.max_links_var = tk.IntVar(value=self._cached_int("max_links", 100, 1, 500))
+        self.timeout_var = tk.IntVar(value=self._cached_int("timeout", 15, 3, 120))
+        self.workers_var = tk.IntVar(value=self._cached_int("workers", 6, 1, 32))
+        self.follow_var = tk.BooleanVar(value=self._cached_bool("follow", True))
+        self.follow_limit_var = tk.IntVar(value=self._cached_int("follow_limit", 5, 1, 50))
+        self.playwright_var = tk.BooleanVar(value=self._cached_bool("playwright", True))
+        self.verbose_var = tk.BooleanVar(value=self._cached_bool("verbose", False))
+        self.cache_var = tk.BooleanVar(value=self._cached_bool("cache", True))
         self.browser_var = tk.StringVar(value=cache.get_setting("last_browser", ""))
-        self.view_var = tk.StringVar(value="all")
+        self.view_var = tk.StringVar(value=self._cached_str("view", "all"))
         self.status_var = tk.StringVar(value="Ready")
         self.summary_var = tk.StringVar(value="No search yet")
 
@@ -83,6 +85,45 @@ class DeepSearchApp(tk.Tk):
         self._url_tag_count = 0
         self._running = False
         self.log_panel_visible = False
+
+    def _cached_str(self, key: str, default: str) -> str:
+        return str(cache.get_setting(_GUI_SETTING_PREFIX + key, default))
+
+    def _cached_int(self, key: str, default: int, minimum: int, maximum: int) -> int:
+        raw = cache.get_setting(_GUI_SETTING_PREFIX + key, str(default))
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = default
+        return max(minimum, min(maximum, value))
+
+    def _cached_bool(self, key: str, default: bool) -> bool:
+        raw = str(cache.get_setting(_GUI_SETTING_PREFIX + key, str(default))).strip().lower()
+        if raw in {"1", "true", "yes", "on"}:
+            return True
+        if raw in {"0", "false", "no", "off"}:
+            return False
+        return default
+
+    def _save_gui_settings(self) -> None:
+        values = {
+            "query": self.query_var.get(),
+            "regex": self.regex_var.get(),
+            "max_results": self.max_results_var.get(),
+            "max_links": self.max_links_var.get(),
+            "timeout": self.timeout_var.get(),
+            "workers": self.workers_var.get(),
+            "follow": self.follow_var.get(),
+            "follow_limit": self.follow_limit_var.get(),
+            "playwright": self.playwright_var.get(),
+            "verbose": self.verbose_var.get(),
+            "cache": self.cache_var.get(),
+            "view": self.view_var.get(),
+        }
+        for key, value in values.items():
+            cache.set_setting(_GUI_SETTING_PREFIX + key, str(value))
+        cache.set_setting("last_sites", self.sites_path.get().strip())
+        cache.set_setting("last_browser", self.browser_var.get().strip())
 
     def _setup_styles(self) -> None:
         style = ttk.Style()
@@ -379,7 +420,7 @@ class DeepSearchApp(tk.Tk):
         )
         if path:
             self.sites_path.set(path)
-            cache.set_setting("last_sites", path)
+            self._save_gui_settings()
 
     def _start_search(self) -> None:
         if self._running:
@@ -403,8 +444,7 @@ class DeepSearchApp(tk.Tk):
             messagebox.showerror("Sites JSON not found", sites_path)
             return
 
-        cache.set_setting("last_sites", sites_path)
-        cache.set_setting("last_browser", self.browser_var.get().strip())
+        self._save_gui_settings()
         setup_logging(verbose=self.verbose_var.get(), gui_queue=self._log_queue)
 
         req = SearchRequest(
@@ -478,6 +518,7 @@ class DeepSearchApp(tk.Tk):
         self._refresh_view()
 
     def _refresh_view(self) -> None:
+        cache.set_setting(_GUI_SETTING_PREFIX + "view", self.view_var.get())
         results = self.latest_candidates if self.view_var.get() == "candidates" else self.latest_results
         self._render_results(results)
 
@@ -682,7 +723,7 @@ class DeepSearchApp(tk.Tk):
 
         self.status_var.set(f"Opening links: 0/{len(urls)}")
         browser_name = self.browser_var.get().strip()
-        cache.set_setting("last_browser", browser_name)
+        self._save_gui_settings()
         threading.Thread(target=self._open_links_worker, args=(urls, browser_name), daemon=True).start()
 
     def _open_links_worker(self, urls: list[str], browser_name: str = "") -> None:
@@ -703,6 +744,10 @@ class DeepSearchApp(tk.Tk):
                 self.after(0, messagebox.showerror, "Browser error", f"Could not open links.\n\n{first_error}")
         else:
             self.after(0, self.status_var.set, f"Opened links: {opened}")
+
+    def _on_close(self) -> None:
+        self._save_gui_settings()
+        self.destroy()
 
 
 def run_gui() -> None:

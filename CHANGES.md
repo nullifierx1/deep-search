@@ -397,3 +397,29 @@ a15e287 Avoid false matches on search pages
 - README обновлён списком Makefile-команд.
 
 **Файлы:** `gui.py`, `Makefile`, `README.md`, `CHANGES.md`
+
+---
+
+## 19. «Переписать README как пользовательское руководство»
+
+**Изменено:**
+- README больше не выглядит как карта проекта: убрана секция со структурой файлов и локальные заметки про конкретные проблемы `python3`.
+- Документ сфокусирован на сценариях использования GUI/CLI, настройке Sites JSON, `link_rules`, `dedupe`, `follow`, кеша и браузера.
+- Добавлен отдельный кейс для языковых search-path вроде `/de/search/{query}` и `/ja/search/{query}`: рекомендуется использовать site-level `link_rules.exclude_url_patterns`, а не `navigation_noise.json`.
+- Уточнено назначение `navigation_noise.json`: это точные глобальные path для навигационного шума, а не regex-фильтр.
+
+**Файлы:** `README.md`, `CHANGES.md`
+
+---
+
+## 20. «Добавить кеширование состояния GUI-контролов»
+
+**Изменено:**
+- GUI теперь восстанавливает последние значения `Query`, `Regex`, лимитов, чекбоксов, выбранного view, sites JSON и browser.
+- Состояние сохраняется при старте поиска, выборе sites JSON, открытии ссылок, переключении view и закрытии окна.
+- Настройки пишутся в существующий `settings.json` с префиксом `gui_`; кеш результатов и пользовательские JSON-файлы не затрагиваются.
+- README обновлён описанием поведения GUI settings cache.
+
+**Проверка:** добавлены тесты на чтение cached GUI values и запись GUI settings.
+
+**Файлы:** `gui.py`, `tests/test_gui_links.py`, `README.md`, `CHANGES.md`
