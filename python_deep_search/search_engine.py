@@ -57,10 +57,10 @@ _BRACKET_RE = _re.compile(r"\[([^\]]*)\]")
 
 
 def _to_search_query(raw: str) -> str:
-    cleaned = _BRACKET_RE.sub(r"\1", raw)
+    cleaned = _BRACKET_RE.sub(lambda m: m.group(1)[0] if m.group(1) else "", raw)
     cleaned = cleaned.replace("|", " ")
     cleaned = _re.sub(r"\s+", " ", cleaned).strip()
-    return cleaned
+    return cleaned.lower()
 
 
 def _resolve_search_url(site_config: dict, query: str) -> str:
@@ -340,7 +340,7 @@ def search_site(
 
         search_url = _resolve_search_url(site_config, search_query)
 
-        logger.info("%s: запрос «%s» → %s", site_name, search_query, search_url)
+        logger.info("%s: запрос «%s» → поиск «%s»", site_name, search_query, search_url)
 
         body = _fetch_page(search_url, sess, headers, req.timeout_sec, req.use_playwright)
         elapsed = time.perf_counter() - started
