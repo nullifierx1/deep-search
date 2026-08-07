@@ -423,3 +423,16 @@ a15e287 Avoid false matches on search pages
 **Проверка:** добавлены тесты на чтение cached GUI values и запись GUI settings.
 
 **Файлы:** `gui.py`, `tests/test_gui_links.py`, `README.md`, `CHANGES.md`
+
+---
+
+## 21. «Зафиксировать последние локальные настройки сайтов в changelog»
+
+**Отмечено в рабочем дереве:**
+- В `bunkr.json` добавлены новые site-конфиги для дополнительных источников, включая сайт с отключённым `follow.enabled` и фильтрацией языковых search-path через `link_rules.exclude_url_patterns`.
+- В `lk-sites.json` изменён search endpoint для `eporner` с query-search на tag-based URL.
+- В `navigation_noise.json` расширен список точных навигационных path, включая `/categories` и языковые корневые пути вроде `/de`, `/ja`, `/ru`.
+
+**Важно:** сами JSON-файлы и `navigation_noise.json` этой записью не коммитятся; это только описание текущих локальных настроек в changelog.
+
+**Файлы:** `CHANGES.md`
