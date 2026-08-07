@@ -130,6 +130,7 @@ def _normalize_follow(raw) -> dict:
     if not isinstance(raw, dict):
         raw = {}
     return {
+        "enabled": bool(raw.get("enabled", True)),
         "collect_child_links": bool(raw.get("collect_child_links", True)),
     }
 

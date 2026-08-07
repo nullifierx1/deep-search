@@ -53,11 +53,11 @@ def test_single_link_gets_clickable_url_range() -> None:
 
 def test_bulk_link_opening_uses_a_new_tab_for_every_url(monkeypatch) -> None:
     app = _AppStub()
-    opened: list[str] = []
-    monkeypatch.setattr(gui.webbrowser, "open_new_tab", lambda url: opened.append(url))
+    opened: list[tuple[str, str]] = []
+    monkeypatch.setattr(gui, "open_browser_tab", lambda url, browser_name="": (opened.append((url, browser_name)) is None, None))
     monkeypatch.setattr(gui._time, "sleep", lambda _seconds: None)
 
-    DeepSearchApp._open_links_worker(app, ["https://example.test/1", "https://example.test/2"])
+    DeepSearchApp._open_links_worker(app, ["https://example.test/1", "https://example.test/2"], "firefox")
 
-    assert opened == ["https://example.test/1", "https://example.test/2"]
+    assert opened == [("https://example.test/1", "firefox"), ("https://example.test/2", "firefox")]
     assert app.status_var.values[-1] == "Opened links: 2"

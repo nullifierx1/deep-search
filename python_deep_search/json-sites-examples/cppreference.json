@@ -34,6 +34,7 @@
       "lowercase_path": false
     },
     "follow": {
+      "enabled": true,
       "collect_child_links": false
     }
   }

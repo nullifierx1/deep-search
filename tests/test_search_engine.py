@@ -82,3 +82,34 @@ def test_site_follow_config_can_disable_child_links(monkeypatch) -> None:
     assert len(result.followed) == 1
     assert result.followed[0].matches
     assert result.followed[0].urls == []
+
+
+def test_site_follow_config_can_disable_following(monkeypatch) -> None:
+    pages = {
+        "https://example.test/search?q=needle": '<a href="/result-1">needle result</a>',
+    }
+    fetched: list[str] = []
+
+    def fake_fetch(url, _session, _headers, _timeout, _use_playwright=True):
+        fetched.append(url)
+        return pages[url]
+
+    monkeypatch.setattr("python_deep_search.search_engine._fetch_page", fake_fetch)
+    result = search_site(
+        "example",
+        {
+            "base_url": "https://example.test",
+            "search_template": "{base}/search?q={query}",
+            "use_full_path": False,
+            "params": None,
+            "path_builder": None,
+            "link_rules": {"search_strict_query": True},
+            "dedupe": {},
+            "follow": {"enabled": False, "collect_child_links": True},
+        },
+        SearchRequest(query="needle", regex_pattern="", follow_limit=1, use_playwright=False),
+    )
+
+    assert result.urls == ["https://example.test/result-1"]
+    assert result.followed == []
+    assert fetched == ["https://example.test/search?q=needle"]

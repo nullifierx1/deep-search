@@ -18,7 +18,7 @@ LOG_FILE = CACHE_DIR / "log_cache.json"
 RESULTS_TTL = 30 * 24 * 3600
 LOG_TTL = 24 * 3600
 LOG_MAX_LINES = 500
-CACHE_SCHEMA_VERSION = 6
+CACHE_SCHEMA_VERSION = 7
 
 
 def _ensure_cache_dir() -> None:

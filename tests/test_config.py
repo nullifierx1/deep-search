@@ -9,4 +9,5 @@ def test_cppreference_example_loads_link_rules_and_dedupe() -> None:
     assert cfg["link_rules"]["include_url_patterns"]
     assert cfg["dedupe"]["strip_suffixes"] == [".html"]
     assert cfg["dedupe"]["path_rewrites"] == [{"from": "^/w/(.*)$", "to": "/$1"}]
+    assert cfg["follow"]["enabled"] is True
     assert cfg["follow"]["collect_child_links"] is False

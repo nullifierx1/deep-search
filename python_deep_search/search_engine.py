@@ -454,7 +454,7 @@ def search_site(
         elapsed = time.perf_counter() - started
 
         visited_follow: set[str] = set(search_urls)
-        if req.follow_links and all_links:
+        if req.follow_links and follow_config.get("enabled", True) and all_links:
             for target_url in all_links[: req.follow_limit]:
                 if target_url in visited_follow:
                     continue
@@ -487,6 +487,8 @@ def search_site(
                         if m.text not in existing:
                             existing.add(m.text)
                             all_matches.append(m)
+        elif req.follow_links and not follow_config.get("enabled", True):
+            logger.info("%s: follow_links disabled by site config", site_name)
 
         all_matches.sort(key=lambda x: x.score, reverse=True)
         all_matches = all_matches[: req.max_results]

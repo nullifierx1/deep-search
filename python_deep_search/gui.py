@@ -5,12 +5,12 @@ import re
 import threading
 import time as _time
 import tkinter as tk
-import webbrowser
 from pathlib import Path
 from queue import Empty, Queue
 from tkinter import filedialog, messagebox, ttk
 
 from . import cache
+from .browser import open_browser_tab
 from .config import DEFAULT_SITES_PATH, load_sites_config
 from .models import SearchRequest, SiteResult
 from .output import save_results_json
@@ -72,6 +72,7 @@ class DeepSearchApp(tk.Tk):
         self.playwright_var = tk.BooleanVar(value=True)
         self.verbose_var = tk.BooleanVar(value=False)
         self.cache_var = tk.BooleanVar(value=True)
+        self.browser_var = tk.StringVar(value=cache.get_setting("last_browser", ""))
         self.view_var = tk.StringVar(value="all")
         self.status_var = tk.StringVar(value="Ready")
         self.summary_var = tk.StringVar(value="No search yet")
@@ -158,8 +159,11 @@ class DeepSearchApp(tk.Tk):
         ttk.Entry(sites_row, textvariable=self.sites_path).grid(row=0, column=0, sticky="ew")
         ttk.Button(sites_row, text="...", width=4, command=self._pick_sites_file).grid(row=0, column=1, padx=(6, 0))
 
+        ttk.Label(panel, text="Browser", style="Panel.TLabel").grid(row=7, column=0, sticky="w", pady=(12, 4))
+        ttk.Entry(panel, textvariable=self.browser_var).grid(row=8, column=0, sticky="ew")
+
         limits = ttk.Frame(panel, style="Panel.TFrame")
-        limits.grid(row=7, column=0, sticky="ew", pady=(16, 0))
+        limits.grid(row=9, column=0, sticky="ew", pady=(16, 0))
         for col in range(2):
             limits.columnconfigure(col, weight=1)
 
@@ -170,29 +174,29 @@ class DeepSearchApp(tk.Tk):
         self._spinbox(limits, "Follow limit", self.follow_limit_var, 1, 50, 4, 0)
 
         flags = ttk.Frame(panel, style="Panel.TFrame")
-        flags.grid(row=8, column=0, sticky="ew", pady=(16, 0))
+        flags.grid(row=10, column=0, sticky="ew", pady=(16, 0))
         ttk.Checkbutton(flags, text="Follow links", variable=self.follow_var).grid(row=0, column=0, sticky="w")
         ttk.Checkbutton(flags, text="Use Playwright", variable=self.playwright_var).grid(row=1, column=0, sticky="w", pady=(4, 0))
         ttk.Checkbutton(flags, text="Use cache", variable=self.cache_var).grid(row=2, column=0, sticky="w", pady=(4, 0))
         ttk.Checkbutton(flags, text="Verbose logs", variable=self.verbose_var).grid(row=3, column=0, sticky="w", pady=(4, 0))
 
         actions = ttk.Frame(panel, style="Panel.TFrame")
-        actions.grid(row=9, column=0, sticky="ew", pady=(18, 0))
+        actions.grid(row=11, column=0, sticky="ew", pady=(18, 0))
         actions.columnconfigure(0, weight=1)
         self.search_button = ttk.Button(actions, text="Search", style="Accent.TButton", command=self._start_search)
         self.search_button.grid(row=0, column=0, sticky="ew")
 
-        ttk.Separator(panel).grid(row=10, column=0, sticky="ew", pady=18)
-        ttk.Label(panel, text="View", style="Panel.TLabel", font=_FONT_BOLD).grid(row=11, column=0, sticky="w")
+        ttk.Separator(panel).grid(row=12, column=0, sticky="ew", pady=18)
+        ttk.Label(panel, text="View", style="Panel.TLabel", font=_FONT_BOLD).grid(row=13, column=0, sticky="w")
         ttk.Radiobutton(panel, text="All sites", variable=self.view_var, value="all", command=self._refresh_view).grid(
-            row=12, column=0, sticky="w", pady=(8, 0)
+            row=14, column=0, sticky="w", pady=(8, 0)
         )
         ttk.Radiobutton(panel, text="Candidates only", variable=self.view_var, value="candidates", command=self._refresh_view).grid(
-            row=13, column=0, sticky="w", pady=(4, 0)
+            row=15, column=0, sticky="w", pady=(4, 0)
         )
 
         bulk = ttk.Frame(panel, style="Panel.TFrame")
-        bulk.grid(row=14, column=0, sticky="ew", pady=(16, 0))
+        bulk.grid(row=16, column=0, sticky="ew", pady=(16, 0))
         bulk.columnconfigure(0, weight=1)
         bulk.columnconfigure(1, weight=1)
         ttk.Button(bulk, text="Open links", command=self._open_visible_links).grid(row=0, column=0, sticky="ew", padx=(0, 4))
@@ -400,6 +404,7 @@ class DeepSearchApp(tk.Tk):
             return
 
         cache.set_setting("last_sites", sites_path)
+        cache.set_setting("last_browser", self.browser_var.get().strip())
         setup_logging(verbose=self.verbose_var.get(), gui_queue=self._log_queue)
 
         req = SearchRequest(
@@ -609,7 +614,12 @@ class DeepSearchApp(tk.Tk):
         self._url_tag_count += 1
         self.text.tag_add("url", start, end)
         self.text.tag_add(tag, start, end)
-        self.text.tag_bind(tag, "<Button-1>", lambda _event, target=url: webbrowser.open_new_tab(target))
+        self.text.tag_bind(tag, "<Button-1>", lambda _event, target=url: self._open_single_url(target))
+
+    def _open_single_url(self, url: str) -> None:
+        ok, error = open_browser_tab(url, self.browser_var.get())
+        if not ok:
+            messagebox.showerror("Browser error", f"Could not open link:\n{url}\n\n{error}")
 
     def _on_error(self, error_text: str) -> None:
         self._set_running(False)
@@ -671,14 +681,23 @@ class DeepSearchApp(tk.Tk):
             return
 
         self.status_var.set(f"Opening links: 0/{len(urls)}")
-        threading.Thread(target=self._open_links_worker, args=(urls,), daemon=True).start()
+        browser_name = self.browser_var.get().strip()
+        cache.set_setting("last_browser", browser_name)
+        threading.Thread(target=self._open_links_worker, args=(urls, browser_name), daemon=True).start()
 
-    def _open_links_worker(self, urls: list[str]) -> None:
+    def _open_links_worker(self, urls: list[str], browser_name: str = "") -> None:
+        failed = 0
         for index, url in enumerate(urls, 1):
-            webbrowser.open_new_tab(url)
+            ok, _error = open_browser_tab(url, browser_name)
+            if not ok:
+                failed += 1
             self.after(0, self.status_var.set, f"Opening links: {index}/{len(urls)}")
             _time.sleep(0.3)
-        self.after(0, self.status_var.set, f"Opened links: {len(urls)}")
+        opened = len(urls) - failed
+        if failed:
+            self.after(0, self.status_var.set, f"Opened links: {opened}, failed: {failed}")
+        else:
+            self.after(0, self.status_var.set, f"Opened links: {opened}")
 
 
 def run_gui() -> None:

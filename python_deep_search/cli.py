@@ -3,10 +3,10 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-import webbrowser
 
 from pathlib import Path
 
+from .browser import open_browser_tab
 from .config import DEFAULT_SITES_PATH, load_sites_config
 from .models import SearchRequest
 from .output import save_results_json
@@ -30,6 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-playwright", action="store_true", help="Отключить Playwright для JS-сайтов")
     p.add_argument("--verbose", "-v", action="store_true", help="Подробный вывод (DEBUG)")
     p.add_argument("--no-cache", action="store_true", help="Игнорировать сохранённые результаты")
+    p.add_argument("--browser", default="", help="Browser name for --open, e.g. firefox, chrome, windows-default")
     return p
 
 
@@ -70,11 +71,14 @@ def print_results(results):
                     _safe_print(f"     link: {u}")
 
 
-def maybe_open_links(results):
+def maybe_open_links(results, browser_name: str = ""):
     for site, data in results.items():
         for u in data.urls:
-            webbrowser.open_new_tab(u)
-            _safe_print(f"Открыто [{site}]: {u}")
+            ok, error = open_browser_tab(u, browser_name)
+            if ok:
+                _safe_print(f"Открыто [{site}]: {u}")
+            else:
+                _safe_print(f"Не удалось открыть [{site}]: {u} ({error})")
 
 
 def run_cli(argv: list[str] | None = None) -> int:
@@ -129,7 +133,7 @@ def run_cli(argv: list[str] | None = None) -> int:
     print(f"Результаты сохранены: {saved}")
 
     if args.open:
-        maybe_open_links(candidates)
+        maybe_open_links(candidates, args.browser)
 
     return 0
 

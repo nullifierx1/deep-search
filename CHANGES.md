@@ -331,3 +331,27 @@ a15e287 Avoid false matches on search pages
 **Проверка:** добавлены тесты на загрузку `cppreference.json`, regex include/exclude, canonical dedupe для cppreference-like URL и `follow.collect_child_links=false`.
 
 **Файлы:** `config.py`, `extractors.py`, `search_engine.py`, `cache.py`, `json-sites-examples/cppreference.json`, `README.md`, `tests/*`, `CHANGES.md`
+
+---
+
+## 15. «Проверить hardcode, добавить site-level no-follow и выбор браузера»
+
+**Найдено при ревизии:**
+- Открытие ссылок было жёстко привязано к `webbrowser.open_new_tab()` без выбора браузера.
+- `follow_links` был только глобальным параметром запроса; в JSON можно было отключить вывод child links, но нельзя было запретить сам переход по search-level ссылкам для конкретного сайта.
+- Search templates для популярных сайтов остаются fallback-эвристикой в `config.py`, но их можно переопределять через `search_template` в JSON.
+- Навигационный шум уже вынесен в `navigation_noise.json`; site-specific дедупликация и include/exclude правила уже задаются через JSON.
+- Кандидаты на будущую конфигурацию: User-Agent/headers, retry delays, пороги meaningful content, список технических/static host фильтров в `extractors.py`.
+
+**Изменено:**
+- Добавлен JSON-флаг `follow.enabled`. Если `false`, сайт не открывает найденные search-level ссылки вторым уровнем, даже когда глобальный follow включён.
+- `bunkr.json` теперь показывает пример сайта с `"follow": {"enabled": false, "collect_child_links": false}` для шумных/редиректящих сайтов.
+- Добавлен `browser.py` с общим helper открытия вкладок.
+- CLI получил `--browser`, который работает вместе с `--open`.
+- GUI получил поле `Browser`; выбранное значение сохраняется в settings cache и используется для кликов по ссылкам и массового открытия.
+- Cache schema поднята до `7`, чтобы старые результаты с другим follow-поведением не всплывали из кеша.
+- README обновлён под `follow.enabled`, `--browser` и GUI Browser field.
+
+**Проверка:** добавлены тесты на `follow.enabled=false`, аргумент `--browser`, named/default browser helper и GUI bulk open с выбранным браузером.
+
+**Файлы:** `browser.py`, `config.py`, `search_engine.py`, `cli.py`, `gui.py`, `cache.py`, `json-sites-examples/*.json`, `README.md`, `tests/*`, `CHANGES.md`

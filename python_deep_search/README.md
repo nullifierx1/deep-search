@@ -81,6 +81,7 @@ python -m python_deep_search.main --mode gui
 - `Query` - поисковый запрос.
 - `Regex` - необязательный regex для извлечения точных совпадений.
 - `Sites JSON` - файл со списком сайтов.
+- `Browser` - необязательное имя браузера для открытия ссылок. Пусто = системный браузер; можно пробовать `firefox`, `chrome`, `windows-default`.
 - `Results` - максимум совпадений на сайт.
 - `Links` - максимум search-level ссылок на сайт.
 - `Timeout` - timeout HTTP-запроса в секундах.
@@ -125,6 +126,12 @@ python -m python_deep_search.main --mode cli "needle" --sites python_deep_search
 python -m python_deep_search.main --mode cli "needle" --open
 ```
 
+Открыть ссылки в конкретном браузере:
+
+```bash
+python -m python_deep_search.main --mode cli "needle" --open --browser firefox
+```
+
 Отключить follow:
 
 ```bash
@@ -154,6 +161,7 @@ python -m python_deep_search.main --mode cli "needle" \
   --workers 6 \
   --timeout 15 \
   --follow-limit 5 \
+  --browser firefox \
   --out python_deep_search/results.json \
   --verbose
 ```
@@ -196,6 +204,7 @@ python -m python_deep_search.main --mode cli "needle" \
       "lowercase_path": false
     },
     "follow": {
+      "enabled": true,
       "collect_child_links": true
     }
   }
@@ -264,10 +273,12 @@ python -m python_deep_search.main --mode cli "needle" \
 
 ```json
 {
+  "enabled": true,
   "collect_child_links": false
 }
 ```
 
+- `enabled`: если `false`, сайт не будет открывать search-level ссылки вторым уровнем даже при включённом глобальном `Follow links` / без `--no-follow`. Полезно для сайтов, которые часто редиректят на шумные или нежелательные домены.
 - `collect_child_links`: если `false`, followed page всё ещё проверяется на matches, но внутренние ссылки этой страницы не попадают в вывод. Это полезно для справочников и wiki-like сайтов, где на странице много боковой навигации.
 
 Пример Bunkr-like конфига:
@@ -282,6 +293,10 @@ python -m python_deep_search.main --mode cli "needle" \
       "mode": "broad",
       "per": "100",
       "sort": "latest"
+    },
+    "follow": {
+      "enabled": false,
+      "collect_child_links": false
     }
   }
 }
@@ -321,6 +336,7 @@ python -m python_deep_search.main --mode cli "needle" \
       "ignore_query": true
     },
     "follow": {
+      "enabled": true,
       "collect_child_links": false
     }
   }
