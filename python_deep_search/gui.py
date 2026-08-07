@@ -51,6 +51,7 @@ class DeepSearchApp(tk.Tk):
         self.follow_var = tk.BooleanVar(value=True)
         self.follow_limit_var = tk.IntVar(value=5)
         self.playwright_var = tk.BooleanVar(value=True)
+        self.verbose_var = tk.BooleanVar(value=False)
         self.show_log_var = tk.BooleanVar(value=False)
 
         self.latest_results: dict = {}
@@ -136,6 +137,7 @@ class DeepSearchApp(tk.Tk):
         ttk.Label(opt2, text="до").pack(side=tk.LEFT, padx=(4, 4))
         ttk.Spinbox(opt2, from_=1, to=20, textvariable=self.follow_limit_var, width=4).pack(side=tk.LEFT)
         ttk.Checkbutton(opt2, text="Playwright", variable=self.playwright_var).pack(side=tk.LEFT, padx=(16, 0))
+        ttk.Checkbutton(opt2, text="Verbose", variable=self.verbose_var).pack(side=tk.LEFT, padx=(16, 0))
 
     def _build_result_area(self, parent: ttk.Frame) -> None:
         self.pane = ttk.PanedWindow(parent, orient=tk.VERTICAL)
@@ -279,6 +281,9 @@ class DeepSearchApp(tk.Tk):
             return
 
         cache.set_setting("last_sites", self.sites_path.get())
+        logging.getLogger("python_deep_search").setLevel(
+            logging.DEBUG if self.verbose_var.get() else logging.INFO
+        )
 
         self.text.delete("1.0", tk.END)
         self.status_var.set("Поиск выполняется…")
@@ -300,6 +305,7 @@ class DeepSearchApp(tk.Tk):
                 follow_links=self.follow_var.get(),
                 follow_limit=max(1, int(self.follow_limit_var.get())),
                 use_playwright=self.playwright_var.get(),
+                verbose=self.verbose_var.get(),
             )
 
             def progress(msg: str) -> None:
