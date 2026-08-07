@@ -1,0 +1,44 @@
+{
+  "wikipedia_ru": {
+    "base_url": "https://ru.wikipedia.org",
+    "search_template": "{base}/w/index.php?search={query}",
+    "use_full_path": false,
+    "params": null
+  },
+  "github": {
+    "base_url": "https://github.com",
+    "search_template": "{base}/search?q={query}",
+    "use_full_path": false,
+    "params": {
+      "type": "repositories",
+      "s": "stars"
+    }
+  },
+  "stackoverflow": {
+    "base_url": "https://stackoverflow.com",
+    "search_template": "{base}/search?q={query}",
+    "use_full_path": false,
+    "params": null
+  },
+  "habr": {
+    "base_url": "https://habr.com",
+    "search_template": "{base}/ru/search/?q={query}",
+    "use_full_path": false,
+    "params": null
+  },
+  "reddit": {
+    "base_url": "https://www.reddit.com",
+    "search_template": "{base}/search/?q={query}",
+    "use_full_path": false,
+    "params": {
+      "sort": "relevance",
+      "t": "all"
+    }
+  },
+  "youtube": {
+    "base_url": "https://www.youtube.com",
+    "search_template": "{base}/results?search_query={query}",
+    "use_full_path": false,
+    "params": null
+  }
+}
