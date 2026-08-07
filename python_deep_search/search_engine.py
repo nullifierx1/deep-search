@@ -219,7 +219,7 @@ def _fetch_page(
 def _extract_from_page(
     body: str, base_url: str, req: SearchRequest
 ) -> tuple[list[str], list[SearchMatch]]:
-    links = extract_links(body, base_url, limit=25)
+    links = extract_links(body, base_url, limit=50)
 
     matches: list[SearchMatch] = []
     seen: set[str] = set()
@@ -298,7 +298,7 @@ def _crawl_path_builder(
 
     all_matches.sort(key=lambda x: x.score, reverse=True)
     all_matches = all_matches[: req.max_results]
-    all_links = all_links[:10]
+    all_links = all_links[:30]
 
     return all_links, all_matches, first_url
 
@@ -360,7 +360,7 @@ def search_site(
 
         all_matches: list[SearchMatch] = []
         all_links: list[str] = []
-        visited_urls: set[str] = set()
+        seen_links: set[str] = set()
         search_urls: list[str] = []
 
         for q in queries:
@@ -387,19 +387,20 @@ def search_site(
                     all_matches.append(m)
 
             for link in q_links:
-                if link not in visited_urls:
-                    visited_urls.add(link)
+                if link not in seen_links:
+                    seen_links.add(link)
                     all_links.append(link)
 
             time.sleep(0.5)
 
         elapsed = time.perf_counter() - started
 
+        visited_follow: set[str] = set(search_urls)
         if req.follow_links and all_links:
             for target_url in all_links[: req.follow_limit]:
-                if target_url in visited_urls:
+                if target_url in visited_follow:
                     continue
-                visited_urls.add(target_url)
+                visited_follow.add(target_url)
                 time.sleep(0.5)
                 logger.info("%s: переход по ссылке %s", site_name, target_url)
                 target_body = _fetch_page(
@@ -416,7 +417,7 @@ def search_site(
 
         all_matches.sort(key=lambda x: x.score, reverse=True)
         all_matches = all_matches[: req.max_results]
-        all_urls = all_links[:10]
+        all_urls = all_links[:30]
 
         found = len(all_matches) > 0
         logger.info(
