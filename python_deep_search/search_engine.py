@@ -244,14 +244,14 @@ def _crawl_path_builder(
             continue
         visited_urls.add(url)
 
-        logger.info("%s: [%d/%d] проверка %s", site_name, n, end, url)
+        logger.info("%s: [%d/%d] проверка «%s» → %s", site_name, n, end, query, url)
 
         body = _fetch_page(url, sess, headers, req.timeout_sec, req.use_playwright)
         if body is None:
             logger.info("%s: пропуск %s (нет ответа или не 200)", site_name, url)
             continue
 
-        logger.info("%s: загружено %s (%d символов)", site_name, url, len(body))
+        logger.info("%s: загружено (%d символов)", site_name, len(body))
 
         links, matches = _extract_from_page(body, base_url, req)
 
@@ -329,13 +329,13 @@ def search_site(
 
         search_url = _resolve_search_url(site_config, req.query)
 
-        logger.info("%s: загрузка %s", site_name, search_url)
+        logger.info("%s: запрос «%s» → %s", site_name, req.query, search_url)
 
         body = _fetch_page(search_url, sess, headers, req.timeout_sec, req.use_playwright)
         elapsed = time.perf_counter() - started
 
         if body is None:
-            logger.warning("%s: не удалось загрузить %s", site_name, search_url)
+            logger.warning("%s: не удалось загрузить «%s»", site_name, req.query)
             return SiteResult(
                 site_name=site_name,
                 base_url=base_url,
