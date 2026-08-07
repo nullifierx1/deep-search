@@ -300,3 +300,34 @@ a15e287 Avoid false matches on search pages
 **Проверка:** добавлены тесты для Bunkr-like навигационного шума, query-релевантных ссылок, двухуровневого follow-вывода, дефолтного sites path и кликабельных GUI-ссылок.
 
 **Файлы:** `gui.py`, `models.py`, `search_engine.py`, `extractors.py`, `navigation_noise.json`, `cache.py`, `config.py`, `cli.py`, `Makefile`, `tests/*`, `CHANGES.md`
+
+---
+
+## 14. «Проверить кейс cppreference и сделать расширяемые правила вместо hardcode»
+
+**Проблема:** у сайтов вроде cppreference много повторяющихся ссылок на одну страницу: anchors, `.html`, `/w/...` и альтернативные формы URL. Частные правила в коде под один домен плохо масштабируются.
+
+**Исправлено:**
+- `sites.json`-формат расширен блоком `link_rules`:
+  - `search_strict_query` управляет строгой привязкой search-level ссылок к query.
+  - `include_url_patterns` разрешает брать только URL, подходящие под regex.
+  - `exclude_url_patterns` отбрасывает служебные URL.
+- Добавлен блок `dedupe`:
+  - `strip_fragment`
+  - `strip_www`
+  - `strip_trailing_slash`
+  - `strip_suffixes`
+  - `path_rewrites`
+  - `ignore_query`
+  - `lowercase_host`
+  - `lowercase_path`
+- Добавлен блок `follow.collect_child_links`: можно обходить найденную страницу ради совпадений, но не выводить её внутренние ссылки.
+- `extractors.py`: дедупликация теперь строится через настраиваемый canonical key без доменных hardcode-правил.
+- `search_engine.py`: site-level правила передаются в извлечение search-level и followed links.
+- `json-sites-examples/cppreference.json`: добавлен пример конфига для cppreference-like сайтов.
+- `cache.py`: схема кеша поднята до `6`.
+- `README.md`: добавлено полное руководство по новым флагам.
+
+**Проверка:** добавлены тесты на загрузку `cppreference.json`, regex include/exclude, canonical dedupe для cppreference-like URL и `follow.collect_child_links=false`.
+
+**Файлы:** `config.py`, `extractors.py`, `search_engine.py`, `cache.py`, `json-sites-examples/cppreference.json`, `README.md`, `tests/*`, `CHANGES.md`

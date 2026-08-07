@@ -159,6 +159,59 @@ def _is_query_relevant(url: str, link_text: str, terms: list[str]) -> bool:
     return any(term in haystack for term in terms)
 
 
+def _matches_any_pattern(url: str, patterns: list[str]) -> bool:
+    for pattern in patterns:
+        try:
+            if re.search(pattern, url, re.IGNORECASE):
+                return True
+        except re.error:
+            continue
+    return False
+
+
+def _passes_url_rules(url: str, link_rules: dict | None) -> bool:
+    if not link_rules:
+        return True
+    include_patterns = link_rules.get("include_url_patterns") or []
+    exclude_patterns = link_rules.get("exclude_url_patterns") or []
+    if include_patterns and not _matches_any_pattern(url, include_patterns):
+        return False
+    if exclude_patterns and _matches_any_pattern(url, exclude_patterns):
+        return False
+    return True
+
+
+def _dedupe_key(url: str, dedupe: dict | None) -> str:
+    if not dedupe:
+        return url
+
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    netloc = parsed.netloc
+    if dedupe.get("lowercase_host", True):
+        netloc = netloc.lower()
+    if dedupe.get("strip_www") and netloc.lower().startswith("www."):
+        netloc = netloc[4:]
+
+    path = unquote(parsed.path)
+    for suffix in dedupe.get("strip_suffixes", []):
+        if suffix and path.lower().endswith(str(suffix).lower()):
+            path = path[: -len(str(suffix))]
+            break
+    for rewrite in dedupe.get("path_rewrites", []):
+        try:
+            path = re.sub(rewrite["from"], rewrite["to"], path)
+        except (KeyError, re.error):
+            continue
+    if dedupe.get("strip_trailing_slash"):
+        path = path.rstrip("/") or "/"
+    if dedupe.get("lowercase_path"):
+        path = path.lower()
+
+    query = "" if dedupe.get("ignore_query") else parsed.query
+    return f"{scheme}://{netloc}{path}?{query}"
+
+
 def extract_links(
     page_html: str,
     page_url: str,
@@ -166,6 +219,8 @@ def extract_links(
     *,
     query: str | None = None,
     prefer_query_matches: bool = False,
+    link_rules: dict | None = None,
+    dedupe: dict | None = None,
 ) -> list[str]:
     """Extract unique HTTP(S) links, prioritising the current site's links.
 
@@ -178,6 +233,9 @@ def extract_links(
     relevant_same_domain: list[str] = []
     relevant_other_domain: list[str] = []
     terms = _query_terms(query)
+    strict_query = prefer_query_matches and (
+        not link_rules or link_rules.get("search_strict_query", True)
+    )
 
     base_parsed = urlparse(page_url)
     base_netloc = base_parsed.netloc
@@ -195,13 +253,18 @@ def extract_links(
             continue
 
         absolute_url = urljoin(page_url, raw_url)
-        absolute_url = absolute_url.split("#", 1)[0]
-        if absolute_url in seen:
-            continue
-        seen.add(absolute_url)
+        if not dedupe or dedupe.get("strip_fragment", True):
+            absolute_url = absolute_url.split("#", 1)[0]
 
         if not absolute_url.startswith(("http://", "https://")):
             continue
+        if not _passes_url_rules(absolute_url, link_rules):
+            continue
+
+        deduped = _dedupe_key(absolute_url, dedupe)
+        if deduped in seen:
+            continue
+        seen.add(deduped)
 
         parsed = urlparse(absolute_url)
         relevant = _is_query_relevant(absolute_url, link_text, terms)
@@ -220,7 +283,7 @@ def extract_links(
                     other_domain.append(absolute_url)
 
     relevant_result = relevant_same_domain + relevant_other_domain
-    if prefer_query_matches:
+    if strict_query:
         result = relevant_result
     else:
         result = relevant_result + same_domain + other_domain

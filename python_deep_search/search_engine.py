@@ -237,6 +237,8 @@ def _extract_from_page(
     *,
     include_query_snippets: bool = True,
     prefer_query_links: bool = False,
+    link_rules: dict | None = None,
+    dedupe: dict | None = None,
 ) -> tuple[list[str], list[SearchMatch]]:
     links = extract_links(
         body,
@@ -244,6 +246,8 @@ def _extract_from_page(
         limit=req.max_links,
         query=req.query if prefer_query_links else None,
         prefer_query_matches=prefer_query_links,
+        link_rules=link_rules,
+        dedupe=dedupe,
     )
 
     matches: list[SearchMatch] = []
@@ -371,6 +375,9 @@ def search_site(
         }
 
         path_builder = site_config.get("path_builder")
+        link_rules = site_config.get("link_rules")
+        dedupe = site_config.get("dedupe")
+        follow_config = site_config.get("follow") or {}
 
         if path_builder:
             links, matches, search_url = _crawl_path_builder(
@@ -422,7 +429,13 @@ def search_site(
             # A search page usually echoes the query in its title or form.
             # Do not treat that echo as evidence that a result page matched.
             q_links, q_matches = _extract_from_page(
-                body, q_url, req, include_query_snippets=False, prefer_query_links=True
+                body,
+                q_url,
+                req,
+                include_query_snippets=False,
+                prefer_query_links=True,
+                link_rules=link_rules,
+                dedupe=dedupe,
             )
 
             existing_texts = {m.text for m in all_matches}
@@ -453,7 +466,15 @@ def search_site(
                 )
                 if target_body:
                     logger.info("%s: загружена ссылка %s (%d символов)", site_name, target_url, len(target_body))
-                    target_links, target_matches = _extract_from_page(target_body, target_url, req)
+                    target_links, target_matches = _extract_from_page(
+                        target_body,
+                        target_url,
+                        req,
+                        link_rules=link_rules,
+                        dedupe=dedupe,
+                    )
+                    if not follow_config.get("collect_child_links", True):
+                        target_links = []
                     followed_results.append(
                         FollowResult(
                             source_url=target_url,

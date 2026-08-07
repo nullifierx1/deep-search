@@ -1,0 +1,40 @@
+{
+  "cppreference": {
+    "base_url": "https://en.cppreference.com",
+    "search_template": "{base}/mwiki/index.php?search={query}",
+    "use_full_path": false,
+    "params": null,
+    "path_builder": null,
+    "link_rules": {
+      "search_strict_query": false,
+      "include_url_patterns": [
+        "^https://en\\.cppreference\\.com/w/(c|cpp)/.+",
+        "^https://en\\.cppreference\\.com/(c|cpp)/.+"
+      ],
+      "exclude_url_patterns": [
+        "/mwiki/",
+        "[?&]action=",
+        "/Talk:",
+        "/Special:"
+      ]
+    },
+    "dedupe": {
+      "strip_fragment": true,
+      "strip_www": true,
+      "strip_trailing_slash": true,
+      "strip_suffixes": [".html"],
+      "path_rewrites": [
+        {
+          "from": "^/w/(.*)$",
+          "to": "/$1"
+        }
+      ],
+      "ignore_query": true,
+      "lowercase_host": true,
+      "lowercase_path": false
+    },
+    "follow": {
+      "collect_child_links": false
+    }
+  }
+}

@@ -101,3 +101,42 @@ def test_followed_links_drop_bunkr_navigation_noise() -> None:
 
 def test_navigation_noise_paths_are_loaded_from_config() -> None:
     assert "/topfiles" in _navigation_noise_paths()
+
+
+def test_extract_links_supports_configurable_cppreference_style_dedupe() -> None:
+    html = """
+        <a href="/w/cpp/container/vector.html">std::vector</a>
+        <a href="/w/cpp/container/vector.html#Member_functions">std::vector members</a>
+        <a href="https://www.en.cppreference.com/w/cpp/container/vector.html">duplicate host</a>
+        <a href="/cpp/container/vector">duplicate rewritten path</a>
+        <a href="/w/cpp/algorithm/find.html">std::find</a>
+        <a href="/mwiki/index.php?title=cpp/container/vector&action=edit">edit</a>
+        <a href="/w/Template:cpp/container/vector">template</a>
+    """
+
+    assert extract_links(
+        html,
+        "https://en.cppreference.com/mwiki/index.php?search=vector",
+        prefer_query_matches=True,
+        link_rules={
+            "search_strict_query": False,
+            "include_url_patterns": [
+                r"^https://(www\.)?en\.cppreference\.com/w/cpp/.+",
+                r"^https://(www\.)?en\.cppreference\.com/cpp/.+",
+            ],
+            "exclude_url_patterns": [r"/mwiki/", r"/Template:"],
+        },
+        dedupe={
+            "strip_fragment": True,
+            "strip_www": True,
+            "strip_trailing_slash": True,
+            "strip_suffixes": [".html"],
+            "path_rewrites": [{"from": r"^/w/(.*)$", "to": r"/\1"}],
+            "ignore_query": True,
+            "lowercase_host": True,
+            "lowercase_path": False,
+        },
+    ) == [
+        "https://en.cppreference.com/w/cpp/container/vector.html",
+        "https://en.cppreference.com/w/cpp/algorithm/find.html",
+    ]
