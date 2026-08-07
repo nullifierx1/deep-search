@@ -16,11 +16,11 @@ from .models import SearchRequest, SiteResult
 from .output import save_results_json
 from .search_engine import deep_search, filter_candidates, setup_logging
 
-_FONT = ("Segoe UI", 10)
-_FONT_BOLD = ("Segoe UI", 10, "bold")
-_FONT_TITLE = ("Segoe UI", 16, "bold")
-_FONT_SMALL = ("Segoe UI", 9)
-_FONT_MONO = ("Consolas", 10)
+_FONT = ("Segoe UI", 11)
+_FONT_BOLD = ("Segoe UI", 11, "bold")
+_FONT_TITLE = ("Segoe UI", 17, "bold")
+_FONT_SMALL = ("Segoe UI", 10)
+_FONT_MONO = ("Consolas", 11)
 
 _BG = "#f6f7f9"
 _PANEL = "#ffffff"
@@ -40,8 +40,8 @@ class DeepSearchApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("Deep Search")
-        self.geometry("1240x820")
-        self.minsize(980, 640)
+        self.geometry("1320x860")
+        self.minsize(1040, 680)
         self.tk.call("tk", "scaling", self._screen_scaling())
         self.configure(bg=_BG)
 
@@ -99,7 +99,7 @@ class DeepSearchApp(tk.Tk):
         style.configure("Panel.TLabel", background=_PANEL, foreground=_FG, font=_FONT)
         style.configure("Muted.TLabel", background=_BG, foreground=_MUTED, font=_FONT_SMALL)
         style.configure("Title.TLabel", background=_BG, foreground=_FG, font=_FONT_TITLE)
-        style.configure("TButton", font=_FONT, padding=(10, 6))
+        style.configure("TButton", font=_FONT, padding=(11, 7))
         style.configure("Accent.TButton", background=_ACCENT, foreground="white")
         style.map("Accent.TButton", background=[("active", "#1d4ed8"), ("disabled", "#9ca3af")])
         style.configure("TEntry", fieldbackground=_PANEL, bordercolor=_BORDER, lightcolor=_BORDER, darkcolor=_BORDER)
@@ -107,7 +107,7 @@ class DeepSearchApp(tk.Tk):
         style.configure("TCheckbutton", background=_PANEL, foreground=_FG)
         style.configure("TRadiobutton", background=_PANEL, foreground=_FG)
         style.configure("TProgressbar", troughcolor="#e5e7eb", background=_ACCENT)
-        style.configure("Treeview", font=_FONT, rowheight=28, background=_PANEL, fieldbackground=_PANEL)
+        style.configure("Treeview", font=_FONT, rowheight=30, background=_PANEL, fieldbackground=_PANEL)
         style.configure("Treeview.Heading", font=_FONT_BOLD, background="#eef2f7", foreground=_FG)
 
     def _screen_scaling(self) -> float:
@@ -119,7 +119,7 @@ class DeepSearchApp(tk.Tk):
         return 1.08
 
     def _build_ui(self) -> None:
-        self.columnconfigure(0, weight=0, minsize=330)
+        self.columnconfigure(0, weight=0, minsize=360)
         self.columnconfigure(1, weight=1)
         self.rowconfigure(1, weight=1)
 

@@ -385,3 +385,15 @@ a15e287 Avoid false matches on search pages
 **Проверка:** добавлены тесты на корректную регистрацию пути с пробелами и command placeholder; реальная проверка `open_browser_tab("https://www.google.com", "chrome")` вернула `(True, None)`.
 
 **Файлы:** `browser.py`, `gui.py`, `tests/test_browser.py`, `CHANGES.md`
+
+---
+
+## 18. «Немного увеличить GUI и добавить очистку result cache»
+
+**Изменено:**
+- GUI стал чуть крупнее: базовые шрифты, стартовое окно, минимальный размер, левая панель, кнопки и строки таблицы увеличены без изменения общей структуры.
+- В Makefile добавлена команда `make clean-cache-results`.
+- Команда удаляет только `python_deep_search/.cache/results_cache.json`, не трогая `settings.json` и `log_cache.json`.
+- README обновлён списком Makefile-команд.
+
+**Файлы:** `gui.py`, `Makefile`, `README.md`, `CHANGES.md`

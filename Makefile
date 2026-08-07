@@ -1,4 +1,4 @@
-.SILENT: cli gui run clean pep8 test format install help check
+.SILENT: cli gui run clean clean-cache-results pep8 test format install help check
 
 PYTHON = python3
 FLAKE8 = flake8
@@ -18,7 +18,7 @@ WORKERS ?=6
 OUT ?=python_deep_search/results.json
 VERBOSE ?=0
 
-.PHONY: cli gui run clean pep8 test format install help check all
+.PHONY: cli gui run clean clean-cache-results pep8 test format install help check all
 
 cli:
 	@if not defined QUERY (echo Usage: make cli QUERY="search query" [REGEX="..." SITES="..." ...] && exit /b 1)
@@ -51,6 +51,11 @@ clean:
 	-if exist .coverage del /q .coverage
 	-if exist htmlcov rmdir /s /q htmlcov
 	@echo Clean completed!
+
+clean-cache-results:
+	@echo Cleaning search result cache...
+	-if exist python_deep_search\.cache\results_cache.json del /q python_deep_search\.cache\results_cache.json
+	@echo Search result cache cleaned. Settings were not changed.
 
 pep8:
 	@echo Checking PEP8...
@@ -110,6 +115,7 @@ help:
 	@echo   Development:
 	@echo     make run             Run CLI (alias for make cli)
 	@echo     make clean           Remove temp files
+	@echo     make clean-cache-results Remove query/result cache only
 	@echo     make pep8            Check PEP8 ($(PACKAGE)
 	@echo     make format          Format with black
 	@echo     make test            Run tests with coverage

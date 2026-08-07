@@ -552,6 +552,7 @@ make cli QUERY="needle"
 make cli-open QUERY="needle"
 make cli-no-follow QUERY="needle"
 make cli-no-playwright QUERY="needle"
+make clean-cache-results
 make test
 make help
 ```
