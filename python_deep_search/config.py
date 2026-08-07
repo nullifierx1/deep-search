@@ -59,6 +59,21 @@ def _normalize_params(raw_params) -> dict[str, str] | None:
     return None
 
 
+def _normalize_path_builder(raw) -> dict | None:
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        return {
+            "pattern": str(raw.get("pattern", "")),
+            "start": int(raw.get("start", 1)),
+            "end": int(raw.get("end", 1)),
+            "step": int(raw.get("step", 1)),
+        }
+    if isinstance(raw, str):
+        return {"pattern": raw, "start": 1, "end": 1, "step": 1}
+    return None
+
+
 def load_sites_config(path: str | Path) -> Dict[str, dict]:
     cfg_path = Path(path)
     if not cfg_path.exists():
@@ -79,17 +94,20 @@ def load_sites_config(path: str | Path) -> Dict[str, dict]:
                 "search_template": _guess_search_template(base_url),
                 "use_full_path": False,
                 "params": None,
+                "path_builder": None,
             }
         elif isinstance(value, dict):
             base_url = normalize_base_url(value.get("base_url", ""))
             search_template = value.get("search_template") or _guess_search_template(base_url)
             use_full_path = bool(value.get("use_full_path", False))
             params = _normalize_params(value.get("params"))
+            path_builder = _normalize_path_builder(value.get("path_builder"))
             parsed[site_name] = {
                 "base_url": base_url,
                 "search_template": search_template,
                 "use_full_path": use_full_path,
                 "params": params,
+                "path_builder": path_builder,
             }
         else:
             raise ValueError(

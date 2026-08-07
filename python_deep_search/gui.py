@@ -1,24 +1,26 @@
 from __future__ import annotations
 
+import logging
 import re
 import threading
 import tkinter as tk
 import webbrowser
 from pathlib import Path
+from queue import Queue, Empty
 from tkinter import filedialog, messagebox, ttk
 
 from .config import load_sites_config
 from .models import SearchRequest
 from .output import save_results_json
-from .search_engine import deep_search, filter_candidates
+from .search_engine import deep_search, filter_candidates, setup_logging
 
 
 class DeepSearchApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("Deep Search (Python)")
-        self.geometry("1000x700")
-        self.minsize(900, 600)
+        self.geometry("1000x800")
+        self.minsize(900, 650)
 
         self.sites_path = tk.StringVar(value="python_deep_search/sites.json")
         self.query_var = tk.StringVar()
@@ -29,11 +31,16 @@ class DeepSearchApp(tk.Tk):
         self.follow_var = tk.BooleanVar(value=True)
         self.follow_limit_var = tk.IntVar(value=5)
         self.playwright_var = tk.BooleanVar(value=True)
+        self.show_log_var = tk.BooleanVar(value=False)
 
         self.latest_results = {}
         self.latest_candidates = {}
 
+        self._log_queue: Queue = Queue()
+        setup_logging(verbose=False, gui_queue=self._log_queue)
+
         self._build_ui()
+        self._poll_log_queue()
 
     def _build_ui(self) -> None:
         frm = ttk.Frame(self, padding=10)
@@ -101,6 +108,56 @@ class DeepSearchApp(tk.Tk):
         ttk.Button(bottom, text="Показать все", command=self._show_all).pack(side=tk.LEFT)
         ttk.Button(bottom, text="Открыть все ссылки", command=self._open_all_links).pack(side=tk.RIGHT, padx=4)
         ttk.Button(bottom, text="Открыть ссылки кандидатов", command=self._open_candidate_links).pack(side=tk.RIGHT)
+
+        self._build_log_panel(frm)
+
+    def _build_log_panel(self, parent: ttk.Frame) -> None:
+        self.log_frame = ttk.LabelFrame(parent, text="Логи", padding=5)
+
+        toggle_frame = ttk.Frame(self.log_frame)
+        toggle_frame.pack(fill=tk.X)
+
+        ttk.Checkbutton(toggle_frame, text="Показать логи", variable=self.show_log_var, command=self._toggle_log).pack(side=tk.LEFT)
+        ttk.Button(toggle_frame, text="Очистить", command=self._clear_log).pack(side=tk.RIGHT)
+
+        self.log_text = tk.Text(self.log_frame, height=10, wrap=tk.WORD, state=tk.DISABLED)
+        self.log_scrollbar = ttk.Scrollbar(self.log_frame, orient=tk.VERTICAL, command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=self.log_scrollbar.set)
+        self.log_text.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
+
+    def _toggle_log(self) -> None:
+        if self.show_log_var.get():
+            self.log_frame.pack(fill=tk.BOTH, pady=(10, 0))
+            self.log_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        else:
+            self.log_frame.pack_forget()
+            self.log_scrollbar.pack_forget()
+
+    def _clear_log(self) -> None:
+        self.log_text.configure(state=tk.NORMAL)
+        self.log_text.delete("1.0", tk.END)
+        self.log_text.configure(state=tk.DISABLED)
+
+    def _poll_log_queue(self) -> None:
+        while True:
+            try:
+                record: logging.LogRecord = self._log_queue.get_nowait()
+                self._append_log(record)
+            except Empty:
+                break
+        self.after(250, self._poll_log_queue)
+
+    def _append_log(self, record: logging.LogRecord) -> None:
+        self.log_text.configure(state=tk.NORMAL)
+        level = record.levelname[:4]
+        msg = record.getMessage()
+        self.log_text.insert(tk.END, f"[{level}] {msg}\n")
+        self.log_text.see(tk.END)
+        self.log_text.configure(state=tk.DISABLED)
+
+        level_colors = {"ERRO": "red", "WARN": "orange", "INFO": "black", "DEBU": "gray"}
+        tag_name = f"log_{level}"
+        self.log_text.tag_configure(tag_name, foreground=level_colors.get(level, "black"))
 
     def _pick_sites_file(self) -> None:
         path = filedialog.askopenfilename(title="Выберите JSON", filetypes=[("JSON", "*.json"), ("All", "*.*")])

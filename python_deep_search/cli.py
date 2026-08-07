@@ -8,7 +8,7 @@ import webbrowser
 from .config import load_sites_config
 from .models import SearchRequest
 from .output import save_results_json
-from .search_engine import deep_search, filter_candidates
+from .search_engine import deep_search, filter_candidates, setup_logging
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -24,6 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-follow", action="store_true", help="Не переходить по ссылкам с результатов поиска")
     p.add_argument("--follow-limit", type=int, default=5, help="Сколько ссылок обходить (по умолчанию 5)")
     p.add_argument("--no-playwright", action="store_true", help="Отключить Playwright для JS-сайтов")
+    p.add_argument("--verbose", "-v", action="store_true", help="Подробный вывод (DEBUG)")
     return p
 
 
@@ -73,6 +74,8 @@ def run_cli(argv: list[str] | None = None) -> int:
         print(f"Ошибка regex: {e}")
         return 2
 
+    setup_logging(verbose=args.verbose)
+
     sites = load_sites_config(args.sites)
 
     req = SearchRequest(
@@ -83,6 +86,7 @@ def run_cli(argv: list[str] | None = None) -> int:
         follow_links=not args.no_follow,
         follow_limit=max(1, args.follow_limit),
         use_playwright=not args.no_playwright,
+        verbose=args.verbose,
     )
 
     print(f"Старт поиска: '{req.query}' | regex={req.regex_pattern} | сайтов={len(sites)}")

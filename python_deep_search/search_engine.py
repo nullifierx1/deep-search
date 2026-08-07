@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from queue import Queue
 from typing import Callable
 import re as _re
 from urllib.parse import quote_plus, urljoin as _urljoin_imp, urlparse as _urlparse_imp
@@ -21,9 +23,50 @@ MIN_CONTENT_LINKS = 5
 
 _LINK_BODY_RE = _re.compile(r'href=["\']([^"\']+)["\']', _re.IGNORECASE)
 
+_log_setup_done = False
+
+
+def setup_logging(verbose: bool = False, gui_queue: Queue | None = None) -> None:
+    global _log_setup_done
+    if _log_setup_done:
+        return
+    _log_setup_done = True
+
+    root = logging.getLogger("python_deep_search")
+    root.setLevel(logging.DEBUG if verbose else logging.INFO)
+
+    stderr_handler = logging.StreamHandler(sys.stderr)
+    stderr_handler.setLevel(logging.DEBUG if verbose else logging.INFO)
+    stderr_handler.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)-5s] %(message)s", datefmt="%H:%M:%S"
+    ))
+    root.addHandler(stderr_handler)
+
+    if gui_queue is not None:
+        from logging.handlers import QueueHandler
+        qh = QueueHandler(gui_queue)
+        qh.setLevel(logging.INFO)
+        root.addHandler(qh)
+
 
 def _build_search_url(base_url: str, template: str, query: str) -> str:
     return template.format(base=base_url.rstrip("/"), query=quote_plus(query))
+
+
+def _resolve_search_url(site_config: dict, query: str) -> str:
+    template = site_config.get("search_template", "")
+    base_url = site_config.get("base_url", "")
+    use_full_path = site_config.get("use_full_path", False)
+
+    if not template:
+        raise ValueError("Не указан search_template")
+
+    if use_full_path:
+        search_url = template.format(query=quote_plus(query))
+    else:
+        search_url = _build_search_url(base_url, template, query)
+
+    return _append_params(search_url, site_config.get("params"))
 
 
 def _append_params(url: str, params: dict[str, str] | None) -> str:
@@ -47,7 +90,7 @@ def _fetch_html_requests(
             if response.status_code == 200:
                 return response.text
             if 400 <= response.status_code < 500 and response.status_code != 429:
-                logger.debug("HTTP %d для %s — не ретраим", response.status_code, url)
+                logger.info("HTTP %d для %s (не ретраим)", response.status_code, url)
                 return None
         except (requests.ConnectionError, requests.Timeout) as e:
             last_error = e
@@ -57,19 +100,19 @@ def _fetch_html_requests(
 
         if attempt < RETRY_MAX - 1:
             delay = RETRY_DELAYS[attempt]
-            logger.debug("Ретрай #%d через %ds: %s", attempt + 1, delay, url)
+            logger.info("Ретрай #%d через %ds: %s", attempt + 1, delay, url)
             time.sleep(delay)
 
     if last_error:
-        logger.debug("Не удалось загрузить %s: %s", url, last_error)
+        logger.info("Не удалось загрузить %s: %s", url, last_error)
     return None
 
 
 def _fetch_html_playwright(url: str, timeout: int) -> str | None:
     try:
-        from playwright.sync_api import sync_playwright  # type: ignore[import-untyped]
+        from playwright.sync_api import sync_playwright
     except ImportError:
-        logger.debug("Playwright не установлен, пропускаем JS-рендеринг")
+        logger.info("Playwright не установлен, пропускаем JS-рендеринг")
         return None
 
     try:
@@ -92,7 +135,7 @@ def _fetch_html_playwright(url: str, timeout: int) -> str | None:
             browser.close()
             return html
     except Exception as e:
-        logger.debug("Playwright ошибка для %s: %s", url, e)
+        logger.info("Playwright ошибка для %s: %s", url, e)
         return None
 
 
@@ -136,7 +179,7 @@ def _fetch_page(
         return html
 
     if use_playwright:
-        logger.debug("Пробуем Playwright для %s (контент скудный или JS-скелет)", url)
+        logger.info("Пробуем Playwright для %s (контент скудный или JS-скелет)", url)
         pw_html = _fetch_html_playwright(url, timeout)
         if pw_html and _page_has_meaningful_content(pw_html, url):
             return pw_html
@@ -166,6 +209,71 @@ def _extract_from_page(
     return links, matches[: req.max_results]
 
 
+def _crawl_path_builder(
+    site_name: str,
+    base_url: str,
+    path_builder: dict,
+    query: str,
+    req: SearchRequest,
+    sess: requests.Session,
+    headers: dict[str, str],
+) -> tuple[list[str], list[SearchMatch], str]:
+    pattern = path_builder["pattern"]
+    start = path_builder["start"]
+    end = path_builder["end"]
+    step = path_builder["step"]
+
+    all_links: list[str] = []
+    all_matches: list[SearchMatch] = []
+    first_url = ""
+    visited_urls: set[str] = set()
+
+    for n in range(start, end + 1, step):
+        try:
+            url = pattern.format(n=n, query=quote_plus(query))
+        except KeyError:
+            url = pattern.format(n=n)
+
+        if not url.startswith("http"):
+            url = base_url.rstrip("/") + "/" + url.lstrip("/")
+
+        if not first_url:
+            first_url = url
+
+        if url in visited_urls:
+            continue
+        visited_urls.add(url)
+
+        logger.info("%s: [%d/%d] проверка %s", site_name, n, end, url)
+
+        body = _fetch_page(url, sess, headers, req.timeout_sec, req.use_playwright)
+        if body is None:
+            logger.info("%s: пропуск %s (нет ответа или не 200)", site_name, url)
+            continue
+
+        logger.info("%s: загружено %s (%d символов)", site_name, url, len(body))
+
+        links, matches = _extract_from_page(body, base_url, req)
+
+        for link in links:
+            if link not in visited_urls:
+                all_links.append(link)
+
+        existing = {m.text for m in all_matches}
+        for m in matches:
+            if m.text not in existing:
+                existing.add(m.text)
+                all_matches.append(m)
+
+        time.sleep(0.5)
+
+    all_matches.sort(key=lambda x: x.score, reverse=True)
+    all_matches = all_matches[: req.max_results]
+    all_links = all_links[:10]
+
+    return all_links, all_matches, first_url
+
+
 def search_site(
     site_name: str,
     site_config: dict,
@@ -179,16 +287,6 @@ def search_site(
     own_session = session is None
 
     try:
-        template = site_config.get("search_template", "")
-        if not template:
-            raise ValueError(f"Не указан search_template для {site_name}")
-        use_full_path = site_config.get("use_full_path", False)
-        if use_full_path:
-            search_url = template.format(query=quote_plus(req.query))
-        else:
-            search_url = _build_search_url(base_url, template, req.query)
-        search_url = _append_params(search_url, site_config.get("params"))
-
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -201,10 +299,43 @@ def search_site(
             "Referer": base_url + "/",
         }
 
+        path_builder = site_config.get("path_builder")
+
+        if path_builder:
+            links, matches, search_url = _crawl_path_builder(
+                site_name, base_url, path_builder, req.query, req, sess, headers
+            )
+            all_urls = list(links[:10])
+            elapsed = time.perf_counter() - started
+
+            found = len(matches) > 0
+            logger.info(
+                "%s: завершено (%s, страниц пройдено: %d, совпадений: %d)",
+                site_name,
+                "найдено" if found else "пусто",
+                sum(1 for _ in range(path_builder["start"], path_builder["end"] + 1, path_builder["step"])),
+                len(matches),
+            )
+            return SiteResult(
+                site_name=site_name,
+                base_url=base_url,
+                search_url=search_url,
+                found=found,
+                matches=matches,
+                urls=all_urls,
+                status_code=200,
+                elapsed_sec=elapsed,
+            )
+
+        search_url = _resolve_search_url(site_config, req.query)
+
+        logger.info("%s: загрузка %s", site_name, search_url)
+
         body = _fetch_page(search_url, sess, headers, req.timeout_sec, req.use_playwright)
         elapsed = time.perf_counter() - started
 
         if body is None:
+            logger.warning("%s: не удалось загрузить %s", site_name, search_url)
             return SiteResult(
                 site_name=site_name,
                 base_url=base_url,
@@ -213,6 +344,8 @@ def search_site(
                 elapsed_sec=elapsed,
                 error="Не удалось загрузить страницу",
             )
+
+        logger.info("%s: загружено (%d символов)", site_name, len(body))
 
         links, matches = _extract_from_page(body, base_url, req)
         all_urls = list(links[:10])
@@ -224,10 +357,12 @@ def search_site(
                     continue
                 visited.add(target_url)
                 time.sleep(0.5)
+                logger.info("%s: переход по ссылке %s", site_name, target_url)
                 target_body = _fetch_page(
                     target_url, sess, headers, req.timeout_sec, req.use_playwright
                 )
                 if target_body:
+                    logger.info("%s: загружена ссылка %s (%d символов)", site_name, target_url, len(target_body))
                     _, target_matches = _extract_from_page(target_body, base_url, req)
                     existing = {m.text for m in matches}
                     for m in target_matches:
@@ -239,6 +374,13 @@ def search_site(
             matches = matches[: req.max_results]
 
         found = len(matches) > 0
+        logger.info(
+            "%s: завершено (%s, совпадений: %d, ссылок: %d)",
+            site_name,
+            "найдено" if found else "пусто",
+            len(matches),
+            len(all_urls),
+        )
 
         return SiteResult(
             site_name=site_name,
@@ -253,6 +395,7 @@ def search_site(
 
     except requests.RequestException as e:
         elapsed = time.perf_counter() - started
+        logger.warning("%s: ошибка запроса: %s", site_name, e)
         return SiteResult(
             site_name=site_name,
             base_url=base_url,
@@ -287,6 +430,7 @@ def deep_search(
                 try:
                     result = future.result()
                 except Exception as e:
+                    logger.error("%s: неожиданная ошибка: %s", site_name, e)
                     result = SiteResult(
                         site_name=site_name,
                         base_url=sites[site_name]["base_url"],

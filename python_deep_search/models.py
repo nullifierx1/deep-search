@@ -32,3 +32,4 @@ class SearchRequest:
     follow_links: bool = True
     follow_limit: int = 5
     use_playwright: bool = True
+    verbose: bool = False

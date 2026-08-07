@@ -3,7 +3,8 @@
     "base_url": "https://ru.wikipedia.org",
     "search_template": "{base}/w/index.php?search={query}",
     "use_full_path": false,
-    "params": null
+    "params": null,
+    "path_builder": null
   },
   "github": {
     "base_url": "https://github.com",
@@ -12,19 +13,22 @@
     "params": {
       "type": "repositories",
       "s": "stars"
-    }
+    },
+    "path_builder": null
   },
   "stackoverflow": {
     "base_url": "https://stackoverflow.com",
     "search_template": "{base}/search?q={query}",
     "use_full_path": false,
-    "params": null
+    "params": null,
+    "path_builder": null
   },
   "habr": {
     "base_url": "https://habr.com",
     "search_template": "{base}/ru/search/?q={query}",
     "use_full_path": false,
-    "params": null
+    "params": null,
+    "path_builder": null
   },
   "reddit": {
     "base_url": "https://www.reddit.com",
@@ -33,12 +37,26 @@
     "params": {
       "sort": "relevance",
       "t": "all"
-    }
+    },
+    "path_builder": null
   },
   "youtube": {
     "base_url": "https://www.youtube.com",
     "search_template": "{base}/results?search_query={query}",
     "use_full_path": false,
-    "params": null
+    "params": null,
+    "path_builder": null
+  },
+  "example_path_builder": {
+    "base_url": "https://example.com",
+    "search_template": null,
+    "use_full_path": false,
+    "params": null,
+    "path_builder": {
+      "pattern": "/catalog?page={n}",
+      "start": 1,
+      "end": 5,
+      "step": 1
+    }
   }
 }

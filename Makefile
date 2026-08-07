@@ -16,12 +16,13 @@ MAX_RESULTS ?=10
 TIMEOUT ?=15
 WORKERS ?=6
 OUT ?=python_deep_search/results.json
+VERBOSE ?=0
 
 .PHONY: cli gui run clean pep8 test format install help check all
 
 cli:
 	@if not defined QUERY (echo Usage: make cli QUERY="search query" [REGEX="..." SITES="..." ...] && exit /b 1)
-	$(PYTHON) -m $(PACKAGE).main --mode cli $(QUERY) --regex "$(REGEX)" --sites "$(SITES)" --follow-limit $(FOLLOW_LIMIT) --max-results $(MAX_RESULTS) --timeout $(TIMEOUT) --workers $(WORKERS) --out "$(OUT)"
+	@if "$(VERBOSE)"=="1" ($(PYTHON) -m $(PACKAGE).main --mode cli $(QUERY) --regex "$(REGEX)" --sites "$(SITES)" --follow-limit $(FOLLOW_LIMIT) --max-results $(MAX_RESULTS) --timeout $(TIMEOUT) --workers $(WORKERS) --out "$(OUT)" --verbose) else ($(PYTHON) -m $(PACKAGE).main --mode cli $(QUERY) --regex "$(REGEX)" --sites "$(SITES)" --follow-limit $(FOLLOW_LIMIT) --max-results $(MAX_RESULTS) --timeout $(TIMEOUT) --workers $(WORKERS) --out "$(OUT)")
 
 cli-no-follow:
 	@if not defined QUERY (echo Usage: make cli-no-follow QUERY="search query" && exit /b 1)
@@ -104,7 +105,7 @@ help:
 	@echo   CLI options (override with VAR=value):
 	@echo     REGEX="\bregex\b"    SITES="sites.json"   FOLLOW_LIMIT=5
 	@echo     MAX_RESULTS=10       TIMEOUT=15            WORKERS=6
-	@echo     OUT="results.json"
+	@echo     OUT="results.json"   VERBOSE=1
 	@echo.
 	@echo   Development:
 	@echo     make run             Run CLI (alias for make cli)
