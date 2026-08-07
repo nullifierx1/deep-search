@@ -220,7 +220,11 @@ def _fetch_page(
 
 
 def _extract_from_page(
-    body: str, page_url: str, req: SearchRequest
+    body: str,
+    page_url: str,
+    req: SearchRequest,
+    *,
+    include_query_snippets: bool = True,
 ) -> tuple[list[str], list[SearchMatch]]:
     links = extract_links(body, page_url, limit=req.max_links)
 
@@ -232,10 +236,11 @@ def _extract_from_page(
             seen.add(txt)
             matches.append(SearchMatch(text=txt, score=100))
 
-    for txt in extract_query_snippets(body, req.query, req.max_results):
-        if txt not in seen:
-            seen.add(txt)
-            matches.append(SearchMatch(text=txt, score=60))
+    if include_query_snippets:
+        for txt in extract_query_snippets(body, req.query, req.max_results):
+            if txt not in seen:
+                seen.add(txt)
+                matches.append(SearchMatch(text=txt, score=60))
 
     matches.sort(key=lambda x: x.score, reverse=True)
     return links, matches[: req.max_results]
@@ -381,7 +386,11 @@ def search_site(
 
             logger.info("%s: загружено «%s» (%d символов)", site_name, q, len(body))
 
-            q_links, q_matches = _extract_from_page(body, q_url, req)
+            # A search page usually echoes the query in its title or form.
+            # Do not treat that echo as evidence that a result page matched.
+            q_links, q_matches = _extract_from_page(
+                body, q_url, req, include_query_snippets=False
+            )
 
             existing_texts = {m.text for m in all_matches}
             for m in q_matches:
