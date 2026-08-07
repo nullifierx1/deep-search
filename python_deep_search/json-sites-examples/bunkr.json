@@ -1,0 +1,12 @@
+{
+    "bunkr": {
+        "base_url": "https://balbums.st",
+        "search_template": "{base}/?search={query}",
+        "use_full_path": false,
+        "params": {
+            "mode": "broad",
+            "per": "100",
+            "sort": "latest"
+        }
+    }
+}
