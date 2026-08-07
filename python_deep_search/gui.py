@@ -13,6 +13,7 @@ from .config import load_sites_config
 from .models import SearchRequest
 from .output import save_results_json
 from .search_engine import deep_search, filter_candidates, setup_logging
+from . import cache
 
 _FONT = ("Segoe UI", 10)
 _FONT_BOLD = ("Segoe UI", 10, "bold")
@@ -40,7 +41,8 @@ class DeepSearchApp(tk.Tk):
 
         self._setup_styles()
 
-        self.sites_path = tk.StringVar(value="python_deep_search/sites.json")
+        last_sites = cache.get_setting("last_sites", "python_deep_search/sites.json")
+        self.sites_path = tk.StringVar(value=last_sites)
         self.query_var = tk.StringVar()
         self.regex_var = tk.StringVar(value=r"\b\w+\b")
         self.max_results_var = tk.IntVar(value=10)
@@ -59,6 +61,7 @@ class DeepSearchApp(tk.Tk):
 
         self._build_ui()
         self._poll_log_queue()
+        self._load_cached_logs()
 
     def _setup_styles(self) -> None:
         style = ttk.Style()
@@ -232,12 +235,22 @@ class DeepSearchApp(tk.Tk):
         self.log_text.see(tk.END)
         self.log_text.configure(state=tk.DISABLED)
 
+    def _load_cached_logs(self) -> None:
+        entries = cache.get_cached_logs()
+        if not entries:
+            return
+        self.log_text.configure(state=tk.NORMAL)
+        for entry in entries:
+            self.log_text.insert(tk.END, f"[{entry['level']}] {entry['msg']}\n", (entry["level"],))
+        self.log_text.configure(state=tk.DISABLED)
+
     def _pick_sites_file(self) -> None:
         path = filedialog.askopenfilename(
             title="Выберите JSON", filetypes=[("JSON", "*.json"), ("All", "*.*")]
         )
         if path:
             self.sites_path.set(path)
+            cache.set_setting("last_sites", path)
 
     def _append(self, message: str, *tags: str) -> None:
         self.text.insert(tk.END, message, tags if tags else ())
@@ -264,6 +277,8 @@ class DeepSearchApp(tk.Tk):
         except re.error as e:
             messagebox.showerror("Ошибка regex", str(e))
             return
+
+        cache.set_setting("last_sites", self.sites_path.get())
 
         self.text.delete("1.0", tk.END)
         self.status_var.set("Поиск выполняется…")

@@ -9,6 +9,7 @@ from .config import load_sites_config
 from .models import SearchRequest
 from .output import save_results_json
 from .search_engine import deep_search, filter_candidates, setup_logging
+from . import cache
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -76,7 +77,14 @@ def run_cli(argv: list[str] | None = None) -> int:
 
     setup_logging(verbose=args.verbose)
 
-    sites = load_sites_config(args.sites)
+    sites_path = args.sites
+    if sites_path == "python_deep_search/sites.json":
+        last = cache.get_setting("last_sites")
+        if last:
+            sites_path = last
+
+    sites = load_sites_config(sites_path)
+    cache.set_setting("last_sites", sites_path)
 
     req = SearchRequest(
         query=args.query,

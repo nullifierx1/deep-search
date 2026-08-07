@@ -13,6 +13,7 @@ import requests
 
 from .extractors import clean_text, extract_links, extract_query_snippets, extract_regex_matches
 from .models import SearchMatch, SearchRequest, SiteResult
+from . import cache
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,8 @@ def setup_logging(verbose: bool = False, gui_queue: Queue | None = None) -> None
         qh = QueueHandler(gui_queue)
         qh.setLevel(logging.INFO)
         root.addHandler(qh)
+
+    root.addHandler(cache.LogCacheHandler())
 
 
 def _build_search_url(base_url: str, template: str, query: str) -> str:
@@ -461,8 +464,31 @@ def deep_search(
     req: SearchRequest,
     max_workers: int = 6,
     progress_callback: Callable[[str], None] | None = None,
+    use_cache: bool = True,
 ) -> dict[str, SiteResult]:
-    results: dict[str, SiteResult] = {}
+    if use_cache:
+        cached = cache.get_cached_results(req.query, sites)
+        if cached is not None:
+            logger.info("Результаты найдены в кэше (запрос: «%s»)", req.query)
+            results: dict[str, SiteResult] = {}
+            for name, entry in cached.items():
+                matches = [SearchMatch(text=m["text"], score=m["score"]) for m in entry.get("matches", [])]
+                results[name] = SiteResult(
+                    site_name=name,
+                    base_url=sites.get(name, {}).get("base_url", ""),
+                    search_url="(cached)",
+                    found=entry.get("found", False),
+                    matches=matches,
+                    urls=entry.get("urls", []),
+                    status_code=entry.get("status_code"),
+                    elapsed_sec=entry.get("elapsed_sec", 0),
+                    error=entry.get("error"),
+                )
+            if progress_callback:
+                progress_callback("загружено из кэша")
+            return results
+
+    results = {}
     workers = max(1, min(max_workers, len(sites) or 1))
 
     with requests.Session() as session:
@@ -490,6 +516,9 @@ def deep_search(
                 if progress_callback:
                     state = "найдено" if result.found else "пусто"
                     progress_callback(f"{site_name}: {state}")
+
+    if use_cache and results:
+        cache.set_cached_results(req.query, sites, results)
 
     return results
 
