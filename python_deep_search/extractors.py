@@ -167,8 +167,9 @@ def _query_word_to_pattern(word: str) -> str:
 
 
 def extract_query_snippets(page_html: str, query: str, max_results: int = 10) -> list[str]:
-    words = [w for w in re.split(r"\s+", query.strip()) if w]
-    if not words:
+    groups = [g.strip() for g in query.split("|")]
+    groups = [g for g in groups if g]
+    if not groups:
         return []
 
     text = clean_text(page_html)
@@ -177,38 +178,43 @@ def extract_query_snippets(page_html: str, query: str, max_results: int = 10) ->
     snippets: list[str] = []
     seen: set[str] = set()
 
-    for word in words:
-        lw = word.lower()
-        has_meta = _QUERY_META_RE.search(lw)
+    for group in groups:
+        words = [w for w in re.split(r"\s+", group) if w]
+        if not words:
+            continue
 
-        if has_meta:
-            pattern = re.compile(_query_word_to_pattern(lw), re.IGNORECASE)
-            for m in pattern.finditer(text):
-                idx = m.start()
-                left = max(0, idx - 80)
-                right = min(len(text), idx + max(m.end() - m.start(), 1) + 120)
-                snippet = text[left:right].strip()
-                snippet = re.sub(r"\s+", " ", snippet)
-                if len(snippet) > 15 and snippet not in seen:
-                    seen.add(snippet)
-                    snippets.append(snippet)
-                    if len(snippets) >= max_results:
-                        return snippets
-        else:
-            start = 0
-            while True:
-                idx = low.find(lw, start)
-                if idx == -1:
-                    break
-                left = max(0, idx - 80)
-                right = min(len(text), idx + max(len(word), 1) + 120)
-                snippet = text[left:right].strip()
-                snippet = re.sub(r"\s+", " ", snippet)
-                if len(snippet) > 15 and snippet not in seen:
-                    seen.add(snippet)
-                    snippets.append(snippet)
-                    if len(snippets) >= max_results:
-                        return snippets
-                start = idx + len(word)
+        for word in words:
+            lw = word.lower()
+            has_meta = _QUERY_META_RE.search(lw)
+
+            if has_meta:
+                pattern = re.compile(_query_word_to_pattern(lw), re.IGNORECASE)
+                for m in pattern.finditer(text):
+                    idx = m.start()
+                    left = max(0, idx - 80)
+                    right = min(len(text), idx + max(m.end() - m.start(), 1) + 120)
+                    snippet = text[left:right].strip()
+                    snippet = re.sub(r"\s+", " ", snippet)
+                    if len(snippet) > 15 and snippet not in seen:
+                        seen.add(snippet)
+                        snippets.append(snippet)
+                        if len(snippets) >= max_results:
+                            return snippets
+            else:
+                start = 0
+                while True:
+                    idx = low.find(lw, start)
+                    if idx == -1:
+                        break
+                    left = max(0, idx - 80)
+                    right = min(len(text), idx + max(len(word), 1) + 120)
+                    snippet = text[left:right].strip()
+                    snippet = re.sub(r"\s+", " ", snippet)
+                    if len(snippet) > 15 and snippet not in seen:
+                        seen.add(snippet)
+                        snippets.append(snippet)
+                        if len(snippets) >= max_results:
+                            return snippets
+                    start = idx + len(word)
 
     return snippets

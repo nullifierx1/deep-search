@@ -53,6 +53,16 @@ def _build_search_url(base_url: str, template: str, query: str) -> str:
     return template.format(base=base_url.rstrip("/"), query=quote_plus(query))
 
 
+_BRACKET_RE = _re.compile(r"\[([^\]]*)\]")
+
+
+def _to_search_query(raw: str) -> str:
+    cleaned = _BRACKET_RE.sub(r"\1", raw)
+    cleaned = cleaned.replace("|", " ")
+    cleaned = _re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
 def _resolve_search_url(site_config: dict, query: str) -> str:
     template = site_config.get("search_template", "")
     base_url = site_config.get("base_url", "")
@@ -287,6 +297,7 @@ def search_site(
     own_session = session is None
 
     try:
+        search_query = _to_search_query(req.query)
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -303,7 +314,7 @@ def search_site(
 
         if path_builder:
             links, matches, search_url = _crawl_path_builder(
-                site_name, base_url, path_builder, req.query, req, sess, headers
+                site_name, base_url, path_builder, search_query, req, sess, headers
             )
             all_urls = list(links[:10])
             elapsed = time.perf_counter() - started
@@ -327,15 +338,15 @@ def search_site(
                 elapsed_sec=elapsed,
             )
 
-        search_url = _resolve_search_url(site_config, req.query)
+        search_url = _resolve_search_url(site_config, search_query)
 
-        logger.info("%s: запрос «%s» → %s", site_name, req.query, search_url)
+        logger.info("%s: запрос «%s» → %s", site_name, search_query, search_url)
 
         body = _fetch_page(search_url, sess, headers, req.timeout_sec, req.use_playwright)
         elapsed = time.perf_counter() - started
 
         if body is None:
-            logger.warning("%s: не удалось загрузить «%s»", site_name, req.query)
+            logger.warning("%s: не удалось загрузить «%s»", site_name, search_query)
             return SiteResult(
                 site_name=site_name,
                 base_url=base_url,
