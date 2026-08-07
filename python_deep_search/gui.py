@@ -44,18 +44,20 @@ class DeepSearchApp(tk.Tk):
         last_sites = cache.get_setting("last_sites", "python_deep_search/sites.json")
         self.sites_path = tk.StringVar(value=last_sites)
         self.query_var = tk.StringVar()
-        self.regex_var = tk.StringVar(value=r"\b\w+\b")
+        self.regex_var = tk.StringVar()
         self.max_results_var = tk.IntVar(value=10)
+        self.max_links_var = tk.IntVar(value=100)
         self.timeout_var = tk.IntVar(value=15)
         self.workers_var = tk.IntVar(value=6)
         self.follow_var = tk.BooleanVar(value=True)
         self.follow_limit_var = tk.IntVar(value=5)
         self.playwright_var = tk.BooleanVar(value=True)
         self.verbose_var = tk.BooleanVar(value=False)
-        self.show_log_var = tk.BooleanVar(value=False)
+        self.cache_var = tk.BooleanVar(value=True)
 
         self.latest_results: dict = {}
         self.latest_candidates: dict = {}
+        self._url_tag_count = 0
 
         self._log_queue: Queue = Queue()
         setup_logging(verbose=False, gui_queue=self._log_queue)
@@ -128,6 +130,9 @@ class DeepSearchApp(tk.Tk):
         ttk.Label(opt, text="Workers:").pack(side=tk.LEFT)
         ttk.Spinbox(opt, from_=1, to=32, textvariable=self.workers_var, width=5).pack(side=tk.LEFT, padx=(4, 0))
 
+        ttk.Label(opt, text="Ссылок:").pack(side=tk.LEFT, padx=(16, 0))
+        ttk.Spinbox(opt, from_=1, to=500, textvariable=self.max_links_var, width=5).pack(side=tk.LEFT, padx=(4, 0))
+
         ttk.Button(opt, text="▶  Поиск", style="Accent.TButton", command=self._start_search).pack(side=tk.RIGHT)
 
         opt2 = ttk.Frame(top)
@@ -138,6 +143,7 @@ class DeepSearchApp(tk.Tk):
         ttk.Spinbox(opt2, from_=1, to=20, textvariable=self.follow_limit_var, width=4).pack(side=tk.LEFT)
         ttk.Checkbutton(opt2, text="Playwright", variable=self.playwright_var).pack(side=tk.LEFT, padx=(16, 0))
         ttk.Checkbutton(opt2, text="Verbose", variable=self.verbose_var).pack(side=tk.LEFT, padx=(16, 0))
+        ttk.Checkbutton(opt2, text="Использовать кэш", variable=self.cache_var).pack(side=tk.LEFT, padx=(16, 0))
 
     def _build_result_area(self, parent: ttk.Frame) -> None:
         self.pane = ttk.PanedWindow(parent, orient=tk.VERTICAL)
@@ -158,7 +164,6 @@ class DeepSearchApp(tk.Tk):
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         self.text.tag_configure("url", foreground=_ACCENT, underline=True)
-        self.text.tag_bind("url", "<Button-1>", self._on_url_click)
         self.text.tag_bind("url", "<Enter>", lambda _e: self.text.configure(cursor="hand2"))
         self.text.tag_bind("url", "<Leave>", lambda _e: self.text.configure(cursor="arrow"))
         self.text.tag_configure("header", font=_FONT_BOLD, foreground=_ACCENT)
@@ -258,15 +263,6 @@ class DeepSearchApp(tk.Tk):
         self.text.insert(tk.END, message, tags if tags else ())
         self.text.see(tk.END)
 
-    def _on_url_click(self, event: tk.Event) -> None:
-        index = self.text.index(f"@{event.x},{event.y}")
-        for tag in self.text.tag_names(index):
-            if tag == "url":
-                url = self.text.get(f"{index} linestart", f"{index} lineend").strip()
-                if url.startswith("http"):
-                    webbrowser.open(url)
-                return
-
     def _start_search(self) -> None:
         query = self.query_var.get().strip()
         if not query:
@@ -274,39 +270,48 @@ class DeepSearchApp(tk.Tk):
             return
 
         regex_pattern = self.regex_var.get().strip()
-        try:
-            re.compile(regex_pattern)
-        except re.error as e:
-            messagebox.showerror("Ошибка regex", str(e))
-            return
+        if regex_pattern:
+            try:
+                re.compile(regex_pattern)
+            except re.error as e:
+                messagebox.showerror("Ошибка regex", str(e))
+                return
 
-        cache.set_setting("last_sites", self.sites_path.get())
+        sites_path = self.sites_path.get()
+        cache.set_setting("last_sites", sites_path)
         logging.getLogger("python_deep_search").setLevel(
             logging.DEBUG if self.verbose_var.get() else logging.INFO
         )
 
+        req = SearchRequest(
+            query=query,
+            regex_pattern=regex_pattern,
+            max_results=max(1, self.max_results_var.get()),
+            max_links=max(1, self.max_links_var.get()),
+            timeout_sec=max(3, self.timeout_var.get()),
+            follow_links=self.follow_var.get(),
+            follow_limit=max(1, self.follow_limit_var.get()),
+            use_playwright=self.playwright_var.get(),
+            verbose=self.verbose_var.get(),
+        )
+        max_workers = max(1, self.workers_var.get())
+        use_cache = self.cache_var.get()
+
         self.text.delete("1.0", tk.END)
+        self._url_tag_count = 0
         self.status_var.set("Поиск выполняется…")
         self.progress.start(12)
 
         thread = threading.Thread(
-            target=self._search_worker, args=(query, regex_pattern), daemon=True
+            target=self._search_worker, args=(sites_path, req, max_workers, use_cache), daemon=True
         )
         thread.start()
 
-    def _search_worker(self, query: str, regex_pattern: str) -> None:
+    def _search_worker(
+        self, sites_path: str, req: SearchRequest, max_workers: int, use_cache: bool
+    ) -> None:
         try:
-            sites = load_sites_config(self.sites_path.get())
-            req = SearchRequest(
-                query=query,
-                regex_pattern=regex_pattern,
-                max_results=max(1, int(self.max_results_var.get())),
-                timeout_sec=max(3, int(self.timeout_var.get())),
-                follow_links=self.follow_var.get(),
-                follow_limit=max(1, int(self.follow_limit_var.get())),
-                use_playwright=self.playwright_var.get(),
-                verbose=self.verbose_var.get(),
-            )
+            sites = load_sites_config(sites_path)
 
             def progress(msg: str) -> None:
                 self.after(0, self._append, f"  [ok] {msg}\n")
@@ -314,8 +319,9 @@ class DeepSearchApp(tk.Tk):
             results = deep_search(
                 sites=sites,
                 req=req,
-                max_workers=max(1, int(self.workers_var.get())),
+                max_workers=max_workers,
                 progress_callback=progress,
+                use_cache=use_cache,
             )
 
             candidates = filter_candidates(results)
@@ -347,13 +353,13 @@ class DeepSearchApp(tk.Tk):
                 self._append(f"  Ошибка: {data.error}", "error")
                 continue
 
-            if not data.found:
+            if not data.found and not data.urls:
                 self._append("  Ничего не найдено")
                 continue
 
             if data.matches:
                 self._append(f"  Совпадений: {len(data.matches)}")
-                for i, m in enumerate(data.matches[:5], 1):
+                for i, m in enumerate(data.matches, 1):
                     self._append(f"    {i}. {m.text}")
 
             if data.urls:
@@ -367,7 +373,10 @@ class DeepSearchApp(tk.Tk):
         start = self.text.index("end-1c")
         self.text.insert(tk.END, url)
         end = self.text.index("end-1c")
-        self.text.tag_add("url", start, end)
+        tag = f"url-{self._url_tag_count}"
+        self._url_tag_count += 1
+        self.text.tag_add("url", tag, start, end)
+        self.text.tag_bind(tag, "<Button-1>", lambda _event, target=url: webbrowser.open_new_tab(target))
 
     def _on_error(self, error_text: str) -> None:
         self.progress.stop()
@@ -416,19 +425,25 @@ class DeepSearchApp(tk.Tk):
             messagebox.showwarning("Нет данных", "Сначала выполните поиск")
             return
 
-        opened = 0
-        for _site, data in results.items():
-            if not data.urls:
-                continue
-            for url in data.urls:
-                webbrowser.open(url)
-                opened += 1
-                _time.sleep(0.3)
-
-        if opened == 0:
+        urls = list(dict.fromkeys(url for data in results.values() for url in data.urls))
+        if not urls:
             messagebox.showinfo("Нет ссылок", "Ссылок для открытия не найдено")
-        else:
-            self.status_var.set(f"Открыто ссылок: {opened}")
+            return
+
+        if len(urls) > 10 and not messagebox.askyesno(
+            "Открыть ссылки", f"Открыть {len(urls)} вкладок в браузере?"
+        ):
+            return
+
+        self.status_var.set(f"Открываем ссылок: 0/{len(urls)}")
+        threading.Thread(target=self._open_links_worker, args=(urls,), daemon=True).start()
+
+    def _open_links_worker(self, urls: list[str]) -> None:
+        for index, url in enumerate(urls, 1):
+            webbrowser.open_new_tab(url)
+            self.after(0, self.status_var.set, f"Открываем ссылок: {index}/{len(urls)}")
+            _time.sleep(0.3)
+        self.after(0, self.status_var.set, f"Открыто ссылок: {len(urls)}")
 
 
 def run_gui() -> None:
