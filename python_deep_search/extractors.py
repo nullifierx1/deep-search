@@ -2,45 +2,29 @@ from __future__ import annotations
 
 import html
 import re
+from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
-LINK_RE = re.compile(r'href=["\']([^"\']+)["\']', re.IGNORECASE)
 TAG_RE = re.compile(r"<[^>]+>")
 SCRIPT_STYLE_RE = re.compile(r"<(script|style|noscript|iframe|svg)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
-
-_SAME_DOMAIN_LIMIT = 30
-_OTHER_DOMAIN_LIMIT = 3
-
-_NON_CONTENT_PATH_PREFIXES = (
-    "/login", "/signup", "/register", "/signin", "/logout",
-    "/search", "/account", "/settings", "/preferences",
-    "/about", "/contact", "/privacy", "/terms", "/legal", "/policy",
-    "/careers", "/press", "/pricing", "/products",
-    "/features", "/download", "/api", "/feed", "/rss",
-    "/blog", "/news", "/events", "/community", "/tour",
-    "/teams", "/enterprise", "/marketplace", "/explore",
-    "/topics", "/tags", "/users", "/jobs", "/advertising",
-    "/cookie", "/cookies", "/consent", "/security",
-    "/opensearch", "/manifest", "/robots",
-    "/cdn-cgi", "/load.php", "/static/",
-)
-
-_NON_CONTENT_SEGMENTS = (
-    "search", "feed", "rss", "login", "signup", "signin", "register",
-    "account", "settings", "about", "contact", "privacy", "terms",
-    "legal", "policy", "careers", "press", "pricing",
-    "features", "download", "api", "blog", "news", "events",
-    "community", "tour", "teams", "enterprise", "marketplace",
-    "explore", "topics", "tags", "users", "jobs", "advertising",
-    "solutions", "use-case", "industry", "sandbox", "hubs", "auth",
-    "articles", "start", "resources", "open-source", "sponsors",
-    "accelerator", "stargazers", "companies", "docs",
-    "feedback", "help", "beta",
-)
 
 _FILE_EXT_BLOCK = re.compile(r"\.(css|js|svg|png|ico|jpe?g|gif|webp|woff2?|ttf|eot|xml|rss|json|webmanifest)(\?|#|$)", re.IGNORECASE)
 
 _WIKI_NON_CONTENT = re.compile(r"^/w/(load\.php|index\.php|api\.php)", re.IGNORECASE)
+
+
+class _HrefCollector(HTMLParser):
+    """Collect href values without relying on a fragile regular expression."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.hrefs: list[str] = []
+
+    def handle_starttag(self, _tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        for name, value in attrs:
+            if name.lower() == "href" and value:
+                self.hrefs.append(value.strip())
+                return
 
 
 def clean_text(raw: str) -> str:
@@ -51,7 +35,7 @@ def clean_text(raw: str) -> str:
     return text
 
 
-def _is_content_link(url: str, base_netloc: str) -> bool:
+def _is_content_link(url: str) -> bool:
     parsed = urlparse(url)
     path = parsed.path.lower()
 
@@ -61,41 +45,39 @@ def _is_content_link(url: str, base_netloc: str) -> bool:
     if _WIKI_NON_CONTENT.match(path):
         return False
 
-    if parsed.netloc != base_netloc:
-        return False
-
-    segments = [s for s in path.split("/") if s]
-    if not segments:
-        return False
-
-    for seg in segments:
-        if seg in _NON_CONTENT_SEGMENTS:
-            return False
-
-    if len(segments) < 2:
-        return False
-
-    if path in _NON_CONTENT_PATH_PREFIXES or any(
-        path.startswith(p + "/") or path.startswith(p + "?") for p in _NON_CONTENT_PATH_PREFIXES
-    ):
-        return False
+    # A path such as /article-123, /?id=123, or /blog/article can be a
+    # legitimate result.  Site navigation cannot be identified reliably from
+    # the URL alone, so keep it instead of silently losing search results.
 
     return True
 
 
-def extract_links(page_html: str, base_url: str, limit: int = 20) -> list[str]:
+def extract_links(page_html: str, page_url: str, limit: int | None = None) -> list[str]:
+    """Extract unique HTTP(S) links, prioritising the current site's links.
+
+    ``page_url`` is the final page URL, rather than a site's home page, so
+    relative links are resolved the same way a browser resolves them.
+    """
     seen: set[str] = set()
     same_domain: list[str] = []
     other_domain: list[str] = []
 
-    base_parsed = urlparse(base_url)
+    base_parsed = urlparse(page_url)
     base_netloc = base_parsed.netloc
 
-    for raw_url in LINK_RE.findall(page_html):
+    parser = _HrefCollector()
+    try:
+        parser.feed(page_html)
+    except Exception:
+        # HTMLParser is tolerant, but a malformed page must not abort search.
+        pass
+
+    for raw_url in parser.hrefs:
         if raw_url.startswith(("javascript:", "mailto:", "#", "data:")):
             continue
 
-        absolute_url = urljoin(base_url + "/", raw_url)
+        absolute_url = urljoin(page_url, raw_url)
+        absolute_url = absolute_url.split("#", 1)[0]
         if absolute_url in seen:
             continue
         seen.add(absolute_url)
@@ -105,16 +87,15 @@ def extract_links(page_html: str, base_url: str, limit: int = 20) -> list[str]:
 
         parsed = urlparse(absolute_url)
         if parsed.netloc == base_netloc:
-            if _is_content_link(absolute_url, base_netloc):
+            if _is_content_link(absolute_url):
                 same_domain.append(absolute_url)
-        elif len(other_domain) < _OTHER_DOMAIN_LIMIT:
+        else:
             lower_url = absolute_url.lower()
             if not any(x in lower_url for x in ("cdn.", "static.", "assets.", "avatars.", "gravatar.", "fonts.", "googleapis.", "gstatic.")):
                 other_domain.append(absolute_url)
 
-    result = same_domain[:limit]
-    result.extend(other_domain[: limit - len(result)])
-    return result
+    result = same_domain + other_domain
+    return result if limit is None else result[:limit]
 
 
 def extract_regex_matches(page_html: str, regex_pattern: str, max_results: int = 10) -> list[str]:
