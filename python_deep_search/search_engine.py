@@ -56,11 +56,33 @@ def _build_search_url(base_url: str, template: str, query: str) -> str:
 _BRACKET_RE = _re.compile(r"\[([^\]]*)\]")
 
 
-def _to_search_query(raw: str) -> str:
-    cleaned = _BRACKET_RE.sub(lambda m: m.group(1)[0] if m.group(1) else "", raw)
-    cleaned = cleaned.replace("|", " ")
-    cleaned = _re.sub(r"\s+", " ", cleaned).strip()
-    return cleaned.lower()
+def _expand_query(raw: str) -> list[str]:
+    alternatives = [a.strip() for a in raw.split("|")]
+    results: list[str] = []
+    for alt in alternatives:
+        results.extend(_expand_alternative(alt))
+    return results
+
+
+def _expand_alternative(alt: str) -> list[str]:
+    alt = alt.strip()
+    if not alt:
+        return []
+    parts = _re.split(r"(\[[^\]]*\])", alt)
+    results = [""]
+    for part in parts:
+        if part.startswith("[") and part.endswith("]"):
+            chars = list(part[1:-1])
+            if not chars:
+                continue
+            new_results: list[str] = []
+            for r in results:
+                for c in chars:
+                    new_results.append(r + c)
+            results = new_results
+        else:
+            results = [r + part for r in results]
+    return results
 
 
 def _resolve_search_url(site_config: dict, query: str) -> str:
@@ -297,7 +319,8 @@ def search_site(
     own_session = session is None
 
     try:
-        search_query = _to_search_query(req.query)
+        queries = _expand_query(req.query)
+
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -314,7 +337,7 @@ def search_site(
 
         if path_builder:
             links, matches, search_url = _crawl_path_builder(
-                site_name, base_url, path_builder, search_query, req, sess, headers
+                site_name, base_url, path_builder, queries[0], req, sess, headers
             )
             all_urls = list(links[:10])
             elapsed = time.perf_counter() - started
@@ -338,35 +361,48 @@ def search_site(
                 elapsed_sec=elapsed,
             )
 
-        search_url = _resolve_search_url(site_config, search_query)
+        all_matches: list[SearchMatch] = []
+        all_links: list[str] = []
+        visited_urls: set[str] = set()
+        search_urls: list[str] = []
 
-        logger.info("%s: запрос «%s» → поиск «%s»", site_name, search_query, search_url)
+        for q in queries:
+            q_url = _resolve_search_url(site_config, q)
+            search_urls.append(q_url)
+            if not search_url:
+                search_url = q_url
 
-        body = _fetch_page(search_url, sess, headers, req.timeout_sec, req.use_playwright)
+            logger.info("%s: запрос «%s» → %s", site_name, q, q_url)
+
+            body = _fetch_page(q_url, sess, headers, req.timeout_sec, req.use_playwright)
+            if body is None:
+                logger.warning("%s: не удалось загрузить «%s»", site_name, q)
+                continue
+
+            logger.info("%s: загружено «%s» (%d символов)", site_name, q, len(body))
+
+            q_links, q_matches = _extract_from_page(body, base_url, req)
+
+            existing_texts = {m.text for m in all_matches}
+            for m in q_matches:
+                if m.text not in existing_texts:
+                    existing_texts.add(m.text)
+                    all_matches.append(m)
+
+            for link in q_links:
+                if link not in visited_urls:
+                    visited_urls.add(link)
+                    all_links.append(link)
+
+            time.sleep(0.5)
+
         elapsed = time.perf_counter() - started
 
-        if body is None:
-            logger.warning("%s: не удалось загрузить «%s»", site_name, search_query)
-            return SiteResult(
-                site_name=site_name,
-                base_url=base_url,
-                search_url=search_url,
-                found=False,
-                elapsed_sec=elapsed,
-                error="Не удалось загрузить страницу",
-            )
-
-        logger.info("%s: загружено (%d символов)", site_name, len(body))
-
-        links, matches = _extract_from_page(body, base_url, req)
-        all_urls = list(links[:10])
-
-        if req.follow_links and links:
-            visited: set[str] = {search_url}
-            for target_url in links[: req.follow_limit]:
-                if target_url in visited:
+        if req.follow_links and all_links:
+            for target_url in all_links[: req.follow_limit]:
+                if target_url in visited_urls:
                     continue
-                visited.add(target_url)
+                visited_urls.add(target_url)
                 time.sleep(0.5)
                 logger.info("%s: переход по ссылке %s", site_name, target_url)
                 target_body = _fetch_page(
@@ -375,30 +411,32 @@ def search_site(
                 if target_body:
                     logger.info("%s: загружена ссылка %s (%d символов)", site_name, target_url, len(target_body))
                     _, target_matches = _extract_from_page(target_body, base_url, req)
-                    existing = {m.text for m in matches}
+                    existing = {m.text for m in all_matches}
                     for m in target_matches:
                         if m.text not in existing:
                             existing.add(m.text)
-                            matches.append(m)
+                            all_matches.append(m)
 
-            matches.sort(key=lambda x: x.score, reverse=True)
-            matches = matches[: req.max_results]
+        all_matches.sort(key=lambda x: x.score, reverse=True)
+        all_matches = all_matches[: req.max_results]
+        all_urls = all_links[:10]
 
-        found = len(matches) > 0
+        found = len(all_matches) > 0
         logger.info(
-            "%s: завершено (%s, совпадений: %d, ссылок: %d)",
+            "%s: завершено (%s, запросов: %d, совпадений: %d, ссылок: %d)",
             site_name,
             "найдено" if found else "пусто",
-            len(matches),
+            len(queries),
+            len(all_matches),
             len(all_urls),
         )
 
         return SiteResult(
             site_name=site_name,
             base_url=base_url,
-            search_url=search_url,
+            search_url=" | ".join(search_urls) if len(search_urls) > 1 else search_url,
             found=found,
-            matches=matches,
+            matches=all_matches,
             urls=all_urls,
             status_code=200,
             elapsed_sec=elapsed,
