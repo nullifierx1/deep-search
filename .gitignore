@@ -12,6 +12,9 @@ results.json
 dist/
 build/
 
+# Cache
+python_deep_search/.cache/
+
 # Adult sites
 python_deep_search/leaked-sites.json
 
