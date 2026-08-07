@@ -15,6 +15,8 @@ KNOWN_SEARCH_TEMPLATES: dict[str, str] = {
     "duckduckgo.com": "{base}/?q={query}",
 }
 
+DEFAULT_SITES_PATH = "python_deep_search/json-sites-examples/sites.json"
+
 
 def normalize_base_url(url: str) -> str:
     url = url.strip().rstrip("/")

@@ -5,7 +5,9 @@ import re
 import sys
 import webbrowser
 
-from .config import load_sites_config
+from pathlib import Path
+
+from .config import DEFAULT_SITES_PATH, load_sites_config
 from .models import SearchRequest
 from .output import save_results_json
 from .search_engine import deep_search, filter_candidates, setup_logging
@@ -16,7 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Deep Search CLI")
     p.add_argument("query", help="Поисковый запрос")
     p.add_argument("--regex", default="", help="Regex для извлечения совпадений (необязательно)")
-    p.add_argument("--sites", default="python_deep_search/sites.json", help="Путь к JSON сайтов")
+    p.add_argument("--sites", default=DEFAULT_SITES_PATH, help="Путь к JSON сайтов")
     p.add_argument("--max-results", type=int, default=10, help="Макс. результатов на сайт")
     p.add_argument("--max-links", type=int, default=100, help="Макс. ссылок на сайт")
     p.add_argument("--workers", type=int, default=6, help="Число потоков")
@@ -40,6 +42,8 @@ def _safe_print(text: str) -> None:
 
 def print_results(results):
     for site, data in results.items():
+        if not data.urls:
+            continue
         _safe_print("\n" + "=" * 70)
         _safe_print(f"{site.upper()} | status={data.status_code} | {data.elapsed_sec:.2f}s")
         if data.error:
@@ -49,14 +53,21 @@ def print_results(results):
             _safe_print("Ничего релевантного не найдено")
             continue
 
-        _safe_print(f"Найдено совпадений: {len(data.matches)}")
-        for i, m in enumerate(data.matches[:5], 1):
-            _safe_print(f"  {i}. ({m.score}) {m.text}")
+        _safe_print(f"Search page: {data.search_url}")
 
         if data.urls:
-            _safe_print("Ссылки:")
+            _safe_print("Search links:")
             for i, u in enumerate(data.urls, 1):
                 _safe_print(f"  {i}. {u}")
+
+        if data.followed:
+            _safe_print("Followed pages:")
+            for i, followed in enumerate(data.followed, 1):
+                _safe_print(f"  {i}. {followed.source_url}")
+                for m in followed.matches[:3]:
+                    _safe_print(f"     match ({m.score}): {m.text}")
+                for u in followed.urls[:5]:
+                    _safe_print(f"     link: {u}")
 
 
 def maybe_open_links(results):
@@ -79,9 +90,9 @@ def run_cli(argv: list[str] | None = None) -> int:
     setup_logging(verbose=args.verbose)
 
     sites_path = args.sites
-    if sites_path == "python_deep_search/sites.json":
+    if sites_path == DEFAULT_SITES_PATH:
         last = cache.get_setting("last_sites")
-        if last:
+        if last and Path(last).exists():
             sites_path = last
 
     sites = load_sites_config(sites_path)

@@ -18,7 +18,7 @@ LOG_FILE = CACHE_DIR / "log_cache.json"
 RESULTS_TTL = 30 * 24 * 3600
 LOG_TTL = 24 * 3600
 LOG_MAX_LINES = 500
-CACHE_SCHEMA_VERSION = 2
+CACHE_SCHEMA_VERSION = 5
 
 
 def _ensure_cache_dir() -> None:
@@ -89,6 +89,15 @@ def set_cached_results(req: SearchRequest, sites: dict, results: dict[str, SiteR
             "found": r.found,
             "urls": r.urls,
             "matches": [{"text": m.text, "score": m.score} for m in r.matches],
+            "followed": [
+                {
+                    "source_url": f.source_url,
+                    "urls": f.urls,
+                    "matches": [{"text": m.text, "score": m.score} for m in f.matches],
+                    "error": f.error,
+                }
+                for f in r.followed
+            ],
             "status_code": r.status_code,
             "elapsed_sec": r.elapsed_sec,
             "error": r.error,

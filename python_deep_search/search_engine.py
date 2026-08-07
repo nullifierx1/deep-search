@@ -12,7 +12,7 @@ from urllib.parse import quote_plus, urljoin as _urljoin_imp, urlparse as _urlpa
 import requests
 
 from .extractors import clean_text, extract_links, extract_query_snippets, extract_regex_matches
-from .models import SearchMatch, SearchRequest, SiteResult
+from .models import FollowResult, SearchMatch, SearchRequest, SiteResult
 from . import cache
 
 logger = logging.getLogger(__name__)
@@ -25,31 +25,42 @@ MIN_CONTENT_LINKS = 5
 _LINK_BODY_RE = _re.compile(r'href=["\']([^"\']+)["\']', _re.IGNORECASE)
 
 _log_setup_done = False
+_gui_log_queues: set[int] = set()
 
 
 def setup_logging(verbose: bool = False, gui_queue: Queue | None = None) -> None:
     global _log_setup_done
-    if _log_setup_done:
-        return
-    _log_setup_done = True
 
     root = logging.getLogger("python_deep_search")
     root.setLevel(logging.DEBUG if verbose else logging.INFO)
 
-    stderr_handler = logging.StreamHandler(sys.stderr)
-    stderr_handler.setLevel(logging.DEBUG if verbose else logging.INFO)
-    stderr_handler.setFormatter(logging.Formatter(
-        "%(asctime)s [%(levelname)-5s] %(message)s", datefmt="%H:%M:%S"
-    ))
-    root.addHandler(stderr_handler)
+    stderr_level = logging.DEBUG if verbose else logging.INFO
+    for handler in root.handlers:
+        if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler):
+            handler.setLevel(stderr_level)
+        elif handler.__class__.__name__ == "QueueHandler":
+            handler.setLevel(stderr_level)
+
+    if not _log_setup_done:
+        _log_setup_done = True
+
+        stderr_handler = logging.StreamHandler(sys.stderr)
+        stderr_handler.setLevel(stderr_level)
+        stderr_handler.setFormatter(logging.Formatter(
+            "%(asctime)s [%(levelname)-5s] %(message)s", datefmt="%H:%M:%S"
+        ))
+        root.addHandler(stderr_handler)
+
+        root.addHandler(cache.LogCacheHandler())
 
     if gui_queue is not None:
         from logging.handlers import QueueHandler
-        qh = QueueHandler(gui_queue)
-        qh.setLevel(logging.INFO)
-        root.addHandler(qh)
-
-    root.addHandler(cache.LogCacheHandler())
+        queue_id = id(gui_queue)
+        if queue_id not in _gui_log_queues:
+            _gui_log_queues.add(queue_id)
+            qh = QueueHandler(gui_queue)
+            qh.setLevel(stderr_level)
+            root.addHandler(qh)
 
 
 def _build_search_url(base_url: str, template: str, query: str) -> str:
@@ -225,8 +236,15 @@ def _extract_from_page(
     req: SearchRequest,
     *,
     include_query_snippets: bool = True,
+    prefer_query_links: bool = False,
 ) -> tuple[list[str], list[SearchMatch]]:
-    links = extract_links(body, page_url, limit=req.max_links)
+    links = extract_links(
+        body,
+        page_url,
+        limit=req.max_links,
+        query=req.query if prefer_query_links else None,
+        prefer_query_matches=prefer_query_links,
+    )
 
     matches: list[SearchMatch] = []
     seen: set[str] = set()
@@ -244,6 +262,20 @@ def _extract_from_page(
 
     matches.sort(key=lambda x: x.score, reverse=True)
     return links, matches[: req.max_results]
+
+
+def _filter_child_links(links: list[str], parent_links: list[str], max_links: int) -> list[str]:
+    parent_set = set(parent_links)
+    filtered: list[str] = []
+    seen: set[str] = set()
+    for link in links:
+        if link in parent_set or link in seen:
+            continue
+        seen.add(link)
+        filtered.append(link)
+        if len(filtered) >= max_links:
+            break
+    return filtered
 
 
 def _crawl_path_builder(
@@ -368,6 +400,7 @@ def search_site(
 
         all_matches: list[SearchMatch] = []
         all_links: list[str] = []
+        followed_results: list[FollowResult] = []
         seen_links: set[str] = set()
         search_urls: list[str] = []
 
@@ -389,7 +422,7 @@ def search_site(
             # A search page usually echoes the query in its title or form.
             # Do not treat that echo as evidence that a result page matched.
             q_links, q_matches = _extract_from_page(
-                body, q_url, req, include_query_snippets=False
+                body, q_url, req, include_query_snippets=False, prefer_query_links=True
             )
 
             existing_texts = {m.text for m in all_matches}
@@ -420,7 +453,14 @@ def search_site(
                 )
                 if target_body:
                     logger.info("%s: загружена ссылка %s (%d символов)", site_name, target_url, len(target_body))
-                    _, target_matches = _extract_from_page(target_body, target_url, req)
+                    target_links, target_matches = _extract_from_page(target_body, target_url, req)
+                    followed_results.append(
+                        FollowResult(
+                            source_url=target_url,
+                            matches=target_matches,
+                            urls=_filter_child_links(target_links, all_links, req.max_links),
+                        )
+                    )
                     existing = {m.text for m in all_matches}
                     for m in target_matches:
                         if m.text not in existing:
@@ -448,6 +488,7 @@ def search_site(
             found=found,
             matches=all_matches,
             urls=all_urls,
+            followed=followed_results,
             status_code=200,
             elapsed_sec=elapsed,
         )
@@ -482,6 +523,18 @@ def deep_search(
             results: dict[str, SiteResult] = {}
             for name, entry in cached.items():
                 matches = [SearchMatch(text=m["text"], score=m["score"]) for m in entry.get("matches", [])]
+                followed = [
+                    FollowResult(
+                        source_url=f.get("source_url", ""),
+                        matches=[
+                            SearchMatch(text=m["text"], score=m["score"])
+                            for m in f.get("matches", [])
+                        ],
+                        urls=f.get("urls", []),
+                        error=f.get("error"),
+                    )
+                    for f in entry.get("followed", [])
+                ]
                 results[name] = SiteResult(
                     site_name=name,
                     base_url=sites.get(name, {}).get("base_url", ""),
@@ -489,6 +542,7 @@ def deep_search(
                     found=entry.get("found", False),
                     matches=matches,
                     urls=entry.get("urls", []),
+                    followed=followed,
                     status_code=entry.get("status_code"),
                     elapsed_sec=entry.get("elapsed_sec", 0),
                     error=entry.get("error"),
@@ -532,4 +586,4 @@ def deep_search(
 
 
 def filter_candidates(results: dict[str, SiteResult]) -> dict[str, SiteResult]:
-    return {name: res for name, res in results.items() if res.found}
+    return {name: res for name, res in results.items() if res.urls}

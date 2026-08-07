@@ -11,6 +11,14 @@ class SearchMatch:
 
 
 @dataclass(slots=True)
+class FollowResult:
+    source_url: str
+    matches: List[SearchMatch] = field(default_factory=list)
+    urls: List[str] = field(default_factory=list)
+    error: Optional[str] = None
+
+
+@dataclass(slots=True)
 class SiteResult:
     site_name: str
     base_url: str
@@ -18,6 +26,7 @@ class SiteResult:
     found: bool
     matches: List[SearchMatch] = field(default_factory=list)
     urls: List[str] = field(default_factory=list)
+    followed: List[FollowResult] = field(default_factory=list)
     status_code: Optional[int] = None
     elapsed_sec: float = 0.0
     error: Optional[str] = None

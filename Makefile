@@ -1,6 +1,6 @@
 .SILENT: cli gui run clean pep8 test format install help check
 
-PYTHON = python
+PYTHON = python3
 FLAKE8 = flake8
 MYPY = mypy
 FORMATTER = black
@@ -10,7 +10,7 @@ TEST_DIR = tests
 
 QUERY ?=
 REGEX ?=\b\w+\b
-SITES ?=python_deep_search/sites.json
+SITES ?=python_deep_search/json-sites-examples/sites.json
 FOLLOW_LIMIT ?=5
 MAX_RESULTS ?=10
 TIMEOUT ?=15

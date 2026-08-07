@@ -273,3 +273,30 @@ playwright install chromium
 3082b42 Fix GUI search and link opening
 a15e287 Avoid false matches on search pages
 ```
+
+---
+
+## 13. «Сделай GUI пригодным как приложение и убери шум Bunkr/homepage из результатов»
+
+**Проблемы:**
+- GUI выглядел как один текстовый дамп, плохо масштабировался на ноутбуке и смешивал разные уровни результата.
+- Первый уровень выдачи смешивал search-level ссылки и то, что получилось после переходов.
+- Search-страницы с навигацией домашней страницы могли отдавать шум вроде `/topimages`, `/topfiles`, `/topalbums`.
+- Внутри followed pages снова появлялись навигационные ссылки сайта.
+- Дефолтный `sites.json` указывал на несуществующий путь.
+- Клик по отдельной ссылке в GUI использовал неверный Text tag range.
+
+**Исправлено:**
+- `gui.py`: GUI переработан в двухпанельное приложение: слева параметры, справа таблица сайтов/search URL, ниже детали выбранного сайта.
+- `models.py`: добавлен `FollowResult`; `SiteResult.urls` теперь хранит search-level ссылки, а `SiteResult.followed` хранит результаты переходов по ним.
+- `search_engine.py`: followed pages сохраняются отдельно; `filter_candidates()` считает кандидатом только сайт с исходными search-level ссылками.
+- `extractors.py`: search-level фильтрация стала строгой: если включён `prefer_query_matches`, возвращаются только ссылки, где query найден в URL, тексте ссылки, `title`, `aria-label` или `img alt`.
+- `extractors.py`: навигационный шум фильтруется и на followed pages.
+- `navigation_noise.json`: список навигационных путей вынесен в отдельный JSON, его можно пополнять без правки кода.
+- `cache.py`: схема кеша поднята до `5`, чтобы старые зашумлённые результаты не возвращались.
+- `config.py`, `cli.py`, `gui.py`, `Makefile`: дефолтный путь к sites config переведён на существующий `python_deep_search/json-sites-examples/sites.json`.
+- `search_engine.py`: `setup_logging()` стал идемпотентным и корректно добавляет GUI queue handler при повторном вызове.
+
+**Проверка:** добавлены тесты для Bunkr-like навигационного шума, query-релевантных ссылок, двухуровневого follow-вывода, дефолтного sites path и кликабельных GUI-ссылок.
+
+**Файлы:** `gui.py`, `models.py`, `search_engine.py`, `extractors.py`, `navigation_noise.json`, `cache.py`, `config.py`, `cli.py`, `Makefile`, `tests/*`, `CHANGES.md`
