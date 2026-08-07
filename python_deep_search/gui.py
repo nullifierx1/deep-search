@@ -687,15 +687,20 @@ class DeepSearchApp(tk.Tk):
 
     def _open_links_worker(self, urls: list[str], browser_name: str = "") -> None:
         failed = 0
+        first_error = ""
         for index, url in enumerate(urls, 1):
-            ok, _error = open_browser_tab(url, browser_name)
+            ok, error = open_browser_tab(url, browser_name)
             if not ok:
                 failed += 1
+                if not first_error:
+                    first_error = error or "unknown error"
             self.after(0, self.status_var.set, f"Opening links: {index}/{len(urls)}")
             _time.sleep(0.3)
         opened = len(urls) - failed
         if failed:
             self.after(0, self.status_var.set, f"Opened links: {opened}, failed: {failed}")
+            if opened == 0:
+                self.after(0, messagebox.showerror, "Browser error", f"Could not open links.\n\n{first_error}")
         else:
             self.after(0, self.status_var.set, f"Opened links: {opened}")
 

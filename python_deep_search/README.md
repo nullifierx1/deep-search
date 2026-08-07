@@ -81,7 +81,7 @@ python -m python_deep_search.main --mode gui
 - `Query` - поисковый запрос.
 - `Regex` - необязательный regex для извлечения точных совпадений.
 - `Sites JSON` - файл со списком сайтов.
-- `Browser` - необязательное имя браузера для открытия ссылок. Пусто = системный браузер; можно пробовать `firefox`, `chrome`, `windows-default`.
+- `Browser` - необязательное имя браузера для открытия ссылок. Пусто = системный браузер; можно указывать `chrome`, `edge`, `firefox`, `windows-default` или полный путь вида `"C:\Program Files\Google\Chrome\Application\chrome.exe" %s`.
 - `Results` - максимум совпадений на сайт.
 - `Links` - максимум search-level ссылок на сайт.
 - `Timeout` - timeout HTTP-запроса в секундах.
@@ -130,6 +130,12 @@ python -m python_deep_search.main --mode cli "needle" --open
 
 ```bash
 python -m python_deep_search.main --mode cli "needle" --open --browser firefox
+```
+
+Для Google Chrome на Windows обычно достаточно:
+
+```bash
+python -m python_deep_search.main --mode cli "needle" --open --browser chrome
 ```
 
 Отключить follow:

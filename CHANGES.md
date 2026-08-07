@@ -355,3 +355,33 @@ a15e287 Avoid false matches on search pages
 **Проверка:** добавлены тесты на `follow.enabled=false`, аргумент `--browser`, named/default browser helper и GUI bulk open с выбранным браузером.
 
 **Файлы:** `browser.py`, `config.py`, `search_engine.py`, `cli.py`, `gui.py`, `cache.py`, `json-sites-examples/*.json`, `README.md`, `tests/*`, `CHANGES.md`
+
+---
+
+## 16. «Сделать короткое имя chrome рабочим для выбора браузера»
+
+**Проблема:** на Windows `webbrowser.get("chrome")` может не находить Google Chrome, даже когда `chrome.exe` установлен в стандартном каталоге.
+
+**Изменено:**
+- `browser.py` автоматически регистрирует известные Windows-пути для `chrome` и `edge` перед открытием ссылки.
+- В CLI и GUI теперь можно указывать просто `chrome`, если Chrome установлен в стандартный путь.
+- README обновлён: описаны `chrome`, `edge`, `firefox`, `windows-default` и fallback через полный путь к `.exe`.
+
+**Проверка:** добавлен тест автосрегистрации Chrome; полный набор тестов проходит.
+
+**Файлы:** `browser.py`, `tests/test_browser.py`, `README.md`, `CHANGES.md`
+
+---
+
+## 17. «Исправить Open links для Chrome с путём, содержащим пробелы»
+
+**Проблема:** `webbrowser.BackgroundBrowser("C:\\Program Files\\...\\chrome.exe %s")` воспринимал всю строку как имя executable. Из-за пробела в `Program Files` запуск Chrome падал, а GUI показывал только счётчик failed.
+
+**Исправлено:**
+- Chrome/Edge регистрируются как `BackgroundBrowser([path, "%s"])`, то есть путь к `.exe` и URL идут отдельными аргументами.
+- Полный путь с placeholder тоже поддерживается: `"C:\Program Files\Google\Chrome\Application\chrome.exe" %s`.
+- GUI теперь показывает `Browser error`, если массовое открытие не смогло открыть ни одной ссылки.
+
+**Проверка:** добавлены тесты на корректную регистрацию пути с пробелами и command placeholder; реальная проверка `open_browser_tab("https://www.google.com", "chrome")` вернула `(True, None)`.
+
+**Файлы:** `browser.py`, `gui.py`, `tests/test_browser.py`, `CHANGES.md`
