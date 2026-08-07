@@ -15,9 +15,6 @@ build/
 # Cache
 python_deep_search/.cache/
 
-# Adult sites
-python_deep_search/leaked-sites.json
-
 # Next.js frontend (not part of Python project)
 src/
 node_modules/
