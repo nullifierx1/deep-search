@@ -8,7 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from .models import SiteResult
+from .models import SearchRequest, SiteResult
 
 CACHE_DIR = Path("python_deep_search/.cache")
 RESULTS_FILE = CACHE_DIR / "results_cache.json"
@@ -18,6 +18,7 @@ LOG_FILE = CACHE_DIR / "log_cache.json"
 RESULTS_TTL = 30 * 24 * 3600
 LOG_TTL = 24 * 3600
 LOG_MAX_LINES = 500
+CACHE_SCHEMA_VERSION = 2
 
 
 def _ensure_cache_dir() -> None:
@@ -45,9 +46,20 @@ def _sites_hash(sites: dict) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
 
-def _query_key(query: str, sites: dict) -> str:
+def _query_key(req: SearchRequest, sites: dict) -> str:
     h = _sites_hash(sites)
-    return hashlib.sha256(f"{query}:{h}".encode()).hexdigest()[:16]
+    request_data = {
+        "schema": CACHE_SCHEMA_VERSION,
+        "query": req.query,
+        "regex_pattern": req.regex_pattern,
+        "max_results": req.max_results,
+        "max_links": req.max_links,
+        "follow_links": req.follow_links,
+        "follow_limit": req.follow_limit,
+        "use_playwright": req.use_playwright,
+    }
+    raw = json.dumps(request_data, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(f"{raw}:{h}".encode()).hexdigest()[:16]
 
 
 def _prune_expired(data: dict, ttl: int) -> dict:
@@ -55,9 +67,9 @@ def _prune_expired(data: dict, ttl: int) -> dict:
     return {k: v for k, v in data.items() if now - v.get("ts", 0) < ttl}
 
 
-def get_cached_results(query: str, sites: dict) -> dict[str, Any] | None:
+def get_cached_results(req: SearchRequest, sites: dict) -> dict[str, Any] | None:
     cache = _read_json(RESULTS_FILE)
-    key = _query_key(query, sites)
+    key = _query_key(req, sites)
     entry = cache.get(key)
     if entry is None:
         return None
@@ -68,9 +80,9 @@ def get_cached_results(query: str, sites: dict) -> dict[str, Any] | None:
     return entry.get("results")
 
 
-def set_cached_results(query: str, sites: dict, results: dict[str, SiteResult]) -> None:
+def set_cached_results(req: SearchRequest, sites: dict, results: dict[str, SiteResult]) -> None:
     cache = _prune_expired(_read_json(RESULTS_FILE), RESULTS_TTL)
-    key = _query_key(query, sites)
+    key = _query_key(req, sites)
     serializable: dict[str, Any] = {}
     for name, r in results.items():
         serializable[name] = {
@@ -81,7 +93,7 @@ def set_cached_results(query: str, sites: dict, results: dict[str, SiteResult]) 
             "elapsed_sec": r.elapsed_sec,
             "error": r.error,
         }
-    cache[key] = {"ts": time.time(), "query": query, "results": serializable}
+    cache[key] = {"ts": time.time(), "query": req.query, "results": serializable}
     _write_json(RESULTS_FILE, cache)
 
 

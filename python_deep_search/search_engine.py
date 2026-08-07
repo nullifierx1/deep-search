@@ -220,9 +220,9 @@ def _fetch_page(
 
 
 def _extract_from_page(
-    body: str, base_url: str, req: SearchRequest
+    body: str, page_url: str, req: SearchRequest
 ) -> tuple[list[str], list[SearchMatch]]:
-    links = extract_links(body, base_url, limit=50)
+    links = extract_links(body, page_url, limit=req.max_links)
 
     matches: list[SearchMatch] = []
     seen: set[str] = set()
@@ -285,7 +285,7 @@ def _crawl_path_builder(
 
         logger.info("%s: загружено (%d символов)", site_name, len(body))
 
-        links, matches = _extract_from_page(body, base_url, req)
+        links, matches = _extract_from_page(body, url, req)
 
         for link in links:
             if link not in visited_urls:
@@ -301,7 +301,7 @@ def _crawl_path_builder(
 
     all_matches.sort(key=lambda x: x.score, reverse=True)
     all_matches = all_matches[: req.max_results]
-    all_links = all_links[:30]
+    all_links = all_links[: req.max_links]
 
     return all_links, all_matches, first_url
 
@@ -339,10 +339,10 @@ def search_site(
             links, matches, search_url = _crawl_path_builder(
                 site_name, base_url, path_builder, queries[0], req, sess, headers
             )
-            all_urls = list(links[:10])
+            all_urls = list(links[: req.max_links])
             elapsed = time.perf_counter() - started
 
-            found = len(matches) > 0
+            found = bool(matches or all_urls)
             logger.info(
                 "%s: завершено (%s, страниц пройдено: %d, совпадений: %d)",
                 site_name,
@@ -381,7 +381,7 @@ def search_site(
 
             logger.info("%s: загружено «%s» (%d символов)", site_name, q, len(body))
 
-            q_links, q_matches = _extract_from_page(body, base_url, req)
+            q_links, q_matches = _extract_from_page(body, q_url, req)
 
             existing_texts = {m.text for m in all_matches}
             for m in q_matches:
@@ -411,7 +411,7 @@ def search_site(
                 )
                 if target_body:
                     logger.info("%s: загружена ссылка %s (%d символов)", site_name, target_url, len(target_body))
-                    _, target_matches = _extract_from_page(target_body, base_url, req)
+                    _, target_matches = _extract_from_page(target_body, target_url, req)
                     existing = {m.text for m in all_matches}
                     for m in target_matches:
                         if m.text not in existing:
@@ -420,9 +420,9 @@ def search_site(
 
         all_matches.sort(key=lambda x: x.score, reverse=True)
         all_matches = all_matches[: req.max_results]
-        all_urls = all_links[:30]
+        all_urls = all_links[: req.max_links]
 
-        found = len(all_matches) > 0
+        found = bool(all_matches or all_urls)
         logger.info(
             "%s: завершено (%s, запросов: %d, совпадений: %d, ссылок: %d)",
             site_name,
@@ -467,7 +467,7 @@ def deep_search(
     use_cache: bool = True,
 ) -> dict[str, SiteResult]:
     if use_cache:
-        cached = cache.get_cached_results(req.query, sites)
+        cached = cache.get_cached_results(req, sites)
         if cached is not None:
             logger.info("Результаты найдены в кэше (запрос: «%s»)", req.query)
             results: dict[str, SiteResult] = {}
@@ -491,34 +491,33 @@ def deep_search(
     results = {}
     workers = max(1, min(max_workers, len(sites) or 1))
 
-    with requests.Session() as session:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {
-                executor.submit(search_site, site_name, site_cfg, req, session): site_name
-                for site_name, site_cfg in sites.items()
-            }
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(search_site, site_name, site_cfg, req): site_name
+            for site_name, site_cfg in sites.items()
+        }
 
-            for future in as_completed(futures):
-                site_name = futures[future]
-                try:
-                    result = future.result()
-                except Exception as e:
-                    logger.error("%s: неожиданная ошибка: %s", site_name, e)
-                    result = SiteResult(
-                        site_name=site_name,
-                        base_url=sites[site_name]["base_url"],
-                        search_url="",
-                        found=False,
-                        error=f"Неожиданная ошибка: {e}",
-                    )
+        for future in as_completed(futures):
+            site_name = futures[future]
+            try:
+                result = future.result()
+            except Exception as e:
+                logger.error("%s: неожиданная ошибка: %s", site_name, e)
+                result = SiteResult(
+                    site_name=site_name,
+                    base_url=sites[site_name]["base_url"],
+                    search_url="",
+                    found=False,
+                    error=f"Неожиданная ошибка: {e}",
+                )
 
-                results[site_name] = result
-                if progress_callback:
-                    state = "найдено" if result.found else "пусто"
-                    progress_callback(f"{site_name}: {state}")
+            results[site_name] = result
+            if progress_callback:
+                state = "найдено" if result.found else "пусто"
+                progress_callback(f"{site_name}: {state}")
 
     if use_cache and results:
-        cache.set_cached_results(req.query, sites, results)
+        cache.set_cached_results(req, sites, results)
 
     return results
 

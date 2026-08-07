@@ -15,9 +15,10 @@ from . import cache
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Deep Search CLI")
     p.add_argument("query", help="Поисковый запрос")
-    p.add_argument("--regex", default=r"\b\w+\b", help="Regex для извлечения совпадений")
+    p.add_argument("--regex", default="", help="Regex для извлечения совпадений (необязательно)")
     p.add_argument("--sites", default="python_deep_search/sites.json", help="Путь к JSON сайтов")
     p.add_argument("--max-results", type=int, default=10, help="Макс. результатов на сайт")
+    p.add_argument("--max-links", type=int, default=100, help="Макс. ссылок на сайт")
     p.add_argument("--workers", type=int, default=6, help="Число потоков")
     p.add_argument("--timeout", type=int, default=15, help="Timeout запроса в секундах")
     p.add_argument("--open", action="store_true", help="Открыть найденные ссылки в браузере")
@@ -26,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--follow-limit", type=int, default=5, help="Сколько ссылок обходить (по умолчанию 5)")
     p.add_argument("--no-playwright", action="store_true", help="Отключить Playwright для JS-сайтов")
     p.add_argument("--verbose", "-v", action="store_true", help="Подробный вывод (DEBUG)")
+    p.add_argument("--no-cache", action="store_true", help="Игнорировать сохранённые результаты")
     return p
 
 
@@ -53,27 +55,26 @@ def print_results(results):
 
         if data.urls:
             _safe_print("Ссылки:")
-            for i, u in enumerate(data.urls[:5], 1):
+            for i, u in enumerate(data.urls, 1):
                 _safe_print(f"  {i}. {u}")
 
 
 def maybe_open_links(results):
     for site, data in results.items():
-        if not data.found:
-            continue
-        for u in data.urls[:3]:
-            webbrowser.open(u)
+        for u in data.urls:
+            webbrowser.open_new_tab(u)
             _safe_print(f"Открыто [{site}]: {u}")
 
 
 def run_cli(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    try:
-        re.compile(args.regex)
-    except re.error as e:
-        print(f"Ошибка regex: {e}")
-        return 2
+    if args.regex:
+        try:
+            re.compile(args.regex)
+        except re.error as e:
+            print(f"Ошибка regex: {e}")
+            return 2
 
     setup_logging(verbose=args.verbose)
 
@@ -90,6 +91,7 @@ def run_cli(argv: list[str] | None = None) -> int:
         query=args.query,
         regex_pattern=args.regex,
         max_results=max(1, args.max_results),
+        max_links=max(1, args.max_links),
         timeout_sec=max(3, args.timeout),
         follow_links=not args.no_follow,
         follow_limit=max(1, args.follow_limit),
@@ -102,7 +104,9 @@ def run_cli(argv: list[str] | None = None) -> int:
     def progress(msg: str):
         print(f"[done] {msg}")
 
-    all_results = deep_search(sites, req, max_workers=args.workers, progress_callback=progress)
+    all_results = deep_search(
+        sites, req, max_workers=args.workers, progress_callback=progress, use_cache=not args.no_cache
+    )
     candidates = filter_candidates(all_results)
 
     print_results(all_results)

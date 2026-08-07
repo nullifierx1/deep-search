@@ -28,6 +28,7 @@ class SearchRequest:
     query: str
     regex_pattern: str
     max_results: int = 10
+    max_links: int = 100
     timeout_sec: int = 15
     follow_links: bool = True
     follow_limit: int = 5

@@ -99,6 +99,9 @@ def extract_links(page_html: str, page_url: str, limit: int | None = None) -> li
 
 
 def extract_regex_matches(page_html: str, regex_pattern: str, max_results: int = 10) -> list[str]:
+    if not regex_pattern:
+        return []
+
     try:
         compiled = re.compile(regex_pattern, re.IGNORECASE | re.DOTALL)
     except re.error as e:
