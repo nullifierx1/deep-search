@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from random import uniform
 import re
 from threading import Event
 from time import monotonic
@@ -47,6 +46,9 @@ class SearchSession(requests.Session):
         self.http_requests = 0
         self.browser_renders = 0
         self.rendered_current = False
+        self._min_delay = self.policy.get("min_delay_sec", 0.5)
+        self._max_delay = self.policy.get("max_delay_sec", self._min_delay)
+        self._delay = self._min_delay
         self._next_request = monotonic()
 
     @property
@@ -66,6 +68,13 @@ class SearchSession(requests.Session):
         self.failure = "request_budget"
         return False
 
+    def _pace(self, elapsed: float, successful: bool) -> None:
+        target = min(self._max_delay, max(self._min_delay, elapsed))
+        if not successful:
+            target = max(self._delay, target)
+        self._delay = (self._delay + target) / 2
+        self._next_request = monotonic() + self._delay
+
     def _get_page(self, url: str, headers: dict, timeout: int) -> requests.Response | None:
         for _ in range(6):
             if not self._within_budget():
@@ -75,13 +84,14 @@ class SearchSession(requests.Session):
                 return None
             if not self.policy.get("use_cookies", True):
                 self.cookies.clear()
+            started = monotonic()
+            successful = False
             try:
                 self.http_requests += 1
                 response = self.get(url, headers=headers, timeout=timeout, allow_redirects=False)
+                successful = response.status_code == 200
             finally:
-                minimum = self.policy.get("min_delay_sec", 0.5)
-                maximum = self.policy.get("max_delay_sec", minimum)
-                self._next_request = monotonic() + uniform(minimum, maximum)
+                self._pace(monotonic() - started, successful)
             self.status = response.status_code
             if response.status_code not in {301, 302, 303, 307, 308} or not response.headers.get("Location"):
                 return response

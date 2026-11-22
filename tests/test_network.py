@@ -114,3 +114,13 @@ def test_search_launches_browser_at_most_once_for_one_page(monkeypatch):
     site = {"base_url": "https://example.test", "search_template": "{base}/search?q={query}"}
     result = search_site("example", site, SearchRequest("needle", ""))
     assert len(renders) == result.browser_renders == 1
+
+
+def test_adaptive_pacing_does_not_speed_up_after_quick_errors():
+    with SearchSession(Event(), {"min_delay_sec": 0.5, "max_delay_sec": 2}) as session:
+        session._pace(elapsed=3, successful=True)
+        assert session._delay == 1.25
+        session._pace(elapsed=0.01, successful=False)
+        assert session._delay == 1.25
+        session._pace(elapsed=0.1, successful=True)
+        assert session._delay == 0.875
