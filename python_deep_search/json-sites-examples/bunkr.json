@@ -38,21 +38,5 @@
             "enabled": false,
             "collect_child_links": false
         }
-    },
-    "asmrfree": {
-        "base_url": "https://asmrfree.com/",
-        "search_template": "{base}/?s={query}",
-        "use_full_path": false,
-        "params": null,
-        "follow": {
-            "enabled": true,
-            "collect_child_links": false
-        },
-        "path_builder": {
-            "pattern": "{query}/page/{n}",
-            "start": 1,
-            "end": 8,
-            "step": 1
-        }
     }
 }
