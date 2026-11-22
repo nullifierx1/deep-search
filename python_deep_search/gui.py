@@ -11,29 +11,27 @@ from tkinter import filedialog, messagebox, ttk
 
 from . import cache
 from .browser import open_browser_tab
-from .config import DEFAULT_SITES_PATH, load_sites_config
+from .config import DEFAULT_SITES_PATH, load_sites_config, normalize_page_paths
 from .models import SearchRequest, SiteResult
 from .output import save_results_json
 from .search_engine import deep_search, filter_candidates, setup_logging
 
 _FONT = ("Segoe UI", 11)
 _FONT_BOLD = ("Segoe UI", 11, "bold")
-_FONT_TITLE = ("Segoe UI", 17, "bold")
+_FONT_TITLE = ("Segoe UI", 24, "bold")
 _FONT_SMALL = ("Segoe UI", 10)
 _FONT_MONO = ("Consolas", 11)
 
-_BG = "#f6f7f9"
+_BG = "#edf2f7"
 _PANEL = "#ffffff"
-_FG = "#1f2937"
-_MUTED = "#6b7280"
-_ACCENT = "#2563eb"
-_SUCCESS = "#15803d"
+_FG = "#172638"
+_MUTED = "#52647a"
+_ACCENT = "#08796f"
+_SUCCESS = "#087042"
 _DANGER = "#b91c1c"
-_WARN = "#b45309"
-_BORDER = "#d7dce3"
-_LOG_BG = "#111827"
+_BORDER = "#d6e0e9"
+_LOG_BG = "#172638"
 _LOG_FG = "#d1d5db"
-_OPTIONAL_BOOTSTRAP_THEME = "flatly"
 _GUI_SETTING_PREFIX = "gui_"
 
 
@@ -42,7 +40,7 @@ class DeepSearchApp(tk.Tk):
         super().__init__()
         self.title("Deep Search")
         self.geometry("1320x860")
-        self.minsize(1040, 680)
+        self.minsize(960, 600)
         self.tk.call("tk", "scaling", self._screen_scaling())
         self.configure(bg=_BG)
 
@@ -53,6 +51,8 @@ class DeepSearchApp(tk.Tk):
         setup_logging(verbose=False, gui_queue=self._log_queue)
 
         self._build_ui()
+        self.bind("<Control-Return>", lambda _event: self._start_search())
+        self.query_entry.focus_set()
         self._poll_log_queue()
         self._load_cached_logs()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -85,6 +85,7 @@ class DeepSearchApp(tk.Tk):
         self._url_tag_count = 0
         self._running = False
         self.log_panel_visible = False
+        self._page_overrides: dict[Path, dict[str, list[str]]] = {}
 
     def _cached_str(self, key: str, default: str) -> str:
         return str(cache.get_setting(_GUI_SETTING_PREFIX + key, default))
@@ -127,28 +128,28 @@ class DeepSearchApp(tk.Tk):
 
     def _setup_styles(self) -> None:
         style = ttk.Style()
-        try:
-            import ttkbootstrap  # noqa: F401
-
-            style.theme_use(_OPTIONAL_BOOTSTRAP_THEME)
-        except Exception:
-            style.theme_use("clam")
+        style.theme_use("clam")
         style.configure(".", font=_FONT, background=_BG, foreground=_FG)
         style.configure("TFrame", background=_BG)
         style.configure("Panel.TFrame", background=_PANEL)
         style.configure("TLabel", background=_BG, foreground=_FG, font=_FONT)
         style.configure("Panel.TLabel", background=_PANEL, foreground=_FG, font=_FONT)
+        style.configure("Hint.TLabel", background=_PANEL, foreground=_MUTED, font=_FONT_SMALL)
         style.configure("Muted.TLabel", background=_BG, foreground=_MUTED, font=_FONT_SMALL)
-        style.configure("Title.TLabel", background=_BG, foreground=_FG, font=_FONT_TITLE)
-        style.configure("TButton", font=_FONT, padding=(11, 7))
-        style.configure("Accent.TButton", background=_ACCENT, foreground="white")
-        style.map("Accent.TButton", background=[("active", "#1d4ed8"), ("disabled", "#9ca3af")])
-        style.configure("TEntry", fieldbackground=_PANEL, bordercolor=_BORDER, lightcolor=_BORDER, darkcolor=_BORDER)
+        style.configure("Header.TFrame", background=_LOG_BG)
+        style.configure("Title.TLabel", background=_LOG_BG, foreground="white", font=_FONT_TITLE)
+        style.configure("Header.TLabel", background=_LOG_BG, foreground="#c5d2df", font=_FONT_SMALL)
+        style.configure("TButton", font=_FONT, padding=(11, 7), background="#eff4f7", bordercolor=_BORDER)
+        style.map("TButton", background=[("active", "#deebef")])
+        style.configure("Accent.TButton", background=_ACCENT, foreground="white", bordercolor=_ACCENT)
+        style.map("Accent.TButton", background=[("disabled", "#64748b"), ("active", "#05645c")])
+        style.configure("TEntry", padding=6, fieldbackground=_PANEL, bordercolor=_BORDER, lightcolor=_BORDER, darkcolor=_BORDER)
         style.configure("TSpinbox", fieldbackground=_PANEL, bordercolor=_BORDER)
         style.configure("TCheckbutton", background=_PANEL, foreground=_FG)
         style.configure("TRadiobutton", background=_PANEL, foreground=_FG)
         style.configure("TProgressbar", troughcolor="#e5e7eb", background=_ACCENT)
-        style.configure("Treeview", font=_FONT, rowheight=30, background=_PANEL, fieldbackground=_PANEL)
+        style.configure("Treeview", font=_FONT, rowheight=34, background=_PANEL, fieldbackground=_PANEL, bordercolor=_BORDER)
+        style.map("Treeview", background=[("selected", "#d8efeb")], foreground=[("selected", _FG)])
         style.configure("Treeview.Heading", font=_FONT_BOLD, background="#eef2f7", foreground=_FG)
 
     def _screen_scaling(self) -> float:
@@ -160,7 +161,7 @@ class DeepSearchApp(tk.Tk):
         return 1.08
 
     def _build_ui(self) -> None:
-        self.columnconfigure(0, weight=0, minsize=360)
+        self.columnconfigure(0, weight=0, minsize=300)
         self.columnconfigure(1, weight=1)
         self.rowconfigure(1, weight=1)
 
@@ -170,15 +171,16 @@ class DeepSearchApp(tk.Tk):
         self._build_status_bar()
 
     def _build_header(self) -> None:
-        header = ttk.Frame(self, padding=(18, 14, 18, 8))
-        header.grid(row=0, column=0, columnspan=2, sticky="ew")
+        header = ttk.Frame(self, style="Header.TFrame", padding=(22, 15, 22, 15))
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 16))
         header.columnconfigure(0, weight=1)
 
         ttk.Label(header, text="Deep Search", style="Title.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(header, textvariable=self.summary_var, style="Muted.TLabel").grid(row=1, column=0, sticky="w")
+        ttk.Label(header, textvariable=self.summary_var, style="Header.TLabel").grid(row=1, column=0, sticky="w")
 
         self.progress = ttk.Progressbar(header, mode="indeterminate", length=160)
         self.progress.grid(row=0, column=1, rowspan=2, sticky="e", padx=(16, 0))
+        self.progress.grid_remove()
 
     def _build_controls(self) -> None:
         panel = ttk.Frame(self, style="Panel.TFrame", padding=14)
@@ -188,23 +190,47 @@ class DeepSearchApp(tk.Tk):
         ttk.Label(panel, text="Search", style="Panel.TLabel", font=_FONT_BOLD).grid(row=0, column=0, sticky="w")
 
         ttk.Label(panel, text="Query", style="Panel.TLabel").grid(row=1, column=0, sticky="w", pady=(14, 4))
-        ttk.Entry(panel, textvariable=self.query_var).grid(row=2, column=0, sticky="ew")
+        self.query_entry = ttk.Entry(panel, textvariable=self.query_var)
+        self.query_entry.grid(row=2, column=0, sticky="ew")
+        self.query_entry.bind("<Return>", lambda _event: self._start_search())
 
-        ttk.Label(panel, text="Regex", style="Panel.TLabel").grid(row=3, column=0, sticky="w", pady=(12, 4))
+        ttk.Label(panel, text="Regex (optional)", style="Hint.TLabel").grid(row=3, column=0, sticky="w", pady=(12, 4))
         ttk.Entry(panel, textvariable=self.regex_var).grid(row=4, column=0, sticky="ew")
 
         ttk.Label(panel, text="Sites JSON", style="Panel.TLabel").grid(row=5, column=0, sticky="w", pady=(12, 4))
         sites_row = ttk.Frame(panel, style="Panel.TFrame")
         sites_row.grid(row=6, column=0, sticky="ew")
         sites_row.columnconfigure(0, weight=1)
-        ttk.Entry(sites_row, textvariable=self.sites_path).grid(row=0, column=0, sticky="ew")
-        ttk.Button(sites_row, text="...", width=4, command=self._pick_sites_file).grid(row=0, column=1, padx=(6, 0))
+        ttk.Entry(sites_row, textvariable=self.sites_path, width=21).grid(row=0, column=0, sticky="ew")
+        ttk.Button(sites_row, text="Browse", command=self._pick_sites_file).grid(row=0, column=1, padx=(6, 0))
+        ttk.Button(panel, text="Site paths", command=self._edit_site_paths).grid(
+            row=7, column=0, sticky="ew", pady=(8, 0)
+        )
 
-        ttk.Label(panel, text="Browser", style="Panel.TLabel").grid(row=7, column=0, sticky="w", pady=(12, 4))
-        ttk.Entry(panel, textvariable=self.browser_var).grid(row=8, column=0, sticky="ew")
+        self.search_button = ttk.Button(panel, text="Search", style="Accent.TButton", command=self._start_search)
+        self.search_button.grid(row=8, column=0, sticky="ew", pady=(18, 8))
+        ttk.Button(panel, text="Search settings", command=self._show_search_settings).grid(
+            row=9, column=0, sticky="ew"
+        )
+
+    def _open_dialog(self, title: str) -> tuple[tk.Toplevel, ttk.Frame]:
+        dialog = tk.Toplevel(self, background=_PANEL)
+        dialog.title(title)
+        dialog.transient(self)
+        panel = ttk.Frame(dialog, style="Panel.TFrame", padding=20)
+        panel.pack(fill=tk.BOTH, expand=True)
+        panel.columnconfigure(0, weight=1)
+        dialog.grab_set()
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        return dialog, panel
+
+    def _show_search_settings(self) -> None:
+        dialog, panel = self._open_dialog("Search settings")
+        ttk.Label(panel, text="Browser (optional)", style="Panel.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Entry(panel, textvariable=self.browser_var).grid(row=1, column=0, sticky="ew", pady=(4, 0))
 
         limits = ttk.Frame(panel, style="Panel.TFrame")
-        limits.grid(row=9, column=0, sticky="ew", pady=(16, 0))
+        limits.grid(row=2, column=0, sticky="ew", pady=(16, 0))
         for col in range(2):
             limits.columnconfigure(col, weight=1)
 
@@ -215,33 +241,15 @@ class DeepSearchApp(tk.Tk):
         self._spinbox(limits, "Follow limit", self.follow_limit_var, 1, 50, 4, 0)
 
         flags = ttk.Frame(panel, style="Panel.TFrame")
-        flags.grid(row=10, column=0, sticky="ew", pady=(16, 0))
+        flags.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         ttk.Checkbutton(flags, text="Follow links", variable=self.follow_var).grid(row=0, column=0, sticky="w")
         ttk.Checkbutton(flags, text="Use Playwright", variable=self.playwright_var).grid(row=1, column=0, sticky="w", pady=(4, 0))
         ttk.Checkbutton(flags, text="Use cache", variable=self.cache_var).grid(row=2, column=0, sticky="w", pady=(4, 0))
         ttk.Checkbutton(flags, text="Verbose logs", variable=self.verbose_var).grid(row=3, column=0, sticky="w", pady=(4, 0))
 
-        actions = ttk.Frame(panel, style="Panel.TFrame")
-        actions.grid(row=11, column=0, sticky="ew", pady=(18, 0))
-        actions.columnconfigure(0, weight=1)
-        self.search_button = ttk.Button(actions, text="Search", style="Accent.TButton", command=self._start_search)
-        self.search_button.grid(row=0, column=0, sticky="ew")
-
-        ttk.Separator(panel).grid(row=12, column=0, sticky="ew", pady=18)
-        ttk.Label(panel, text="View", style="Panel.TLabel", font=_FONT_BOLD).grid(row=13, column=0, sticky="w")
-        ttk.Radiobutton(panel, text="All sites", variable=self.view_var, value="all", command=self._refresh_view).grid(
-            row=14, column=0, sticky="w", pady=(8, 0)
+        ttk.Button(panel, text="Done", style="Accent.TButton", command=dialog.destroy).grid(
+            row=4, column=0, sticky="e", pady=(16, 0)
         )
-        ttk.Radiobutton(panel, text="Candidates only", variable=self.view_var, value="candidates", command=self._refresh_view).grid(
-            row=15, column=0, sticky="w", pady=(4, 0)
-        )
-
-        bulk = ttk.Frame(panel, style="Panel.TFrame")
-        bulk.grid(row=16, column=0, sticky="ew", pady=(16, 0))
-        bulk.columnconfigure(0, weight=1)
-        bulk.columnconfigure(1, weight=1)
-        ttk.Button(bulk, text="Open links", command=self._open_visible_links).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ttk.Button(bulk, text="Save JSON", command=self._save_json).grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
     def _spinbox(
         self,
@@ -269,39 +277,49 @@ class DeepSearchApp(tk.Tk):
 
         results_panel = ttk.Frame(self.main_pane, style="Panel.TFrame", padding=10)
         results_panel.columnconfigure(0, weight=1)
-        results_panel.rowconfigure(1, weight=1)
+        results_panel.rowconfigure(2, weight=1)
         self.main_pane.add(results_panel, weight=3)
 
         toolbar = ttk.Frame(results_panel, style="Panel.TFrame")
-        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        toolbar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
         toolbar.columnconfigure(0, weight=1)
         ttk.Label(toolbar, text="Results", style="Panel.TLabel", font=_FONT_BOLD).grid(row=0, column=0, sticky="w")
-        ttk.Button(toolbar, text="Open selected", command=self._open_selected_links).grid(row=0, column=1, padx=(8, 0))
-        ttk.Button(toolbar, text="Logs", command=self._toggle_log_panel).grid(row=0, column=2, padx=(8, 0))
+        ttk.Button(toolbar, text="Logs", command=self._toggle_log_panel).grid(row=0, column=1, padx=(8, 0))
+        ttk.Button(toolbar, text="Save JSON", command=self._save_json).grid(row=0, column=2, padx=(8, 0))
+
+        filters = ttk.Frame(results_panel, style="Panel.TFrame")
+        filters.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        filters.columnconfigure(2, weight=1)
+        for column, (label, value) in enumerate((("All sites", "all"), ("Candidates", "candidates"))):
+            ttk.Radiobutton(filters, text=label, variable=self.view_var, value=value, command=self._refresh_view).grid(
+                row=0, column=column, padx=(0, 8), sticky="w"
+            )
+        ttk.Button(filters, text="Open selected", command=self._open_selected_links).grid(row=0, column=3)
+        ttk.Button(filters, text="Open visible", command=self._open_visible_links).grid(row=0, column=4, padx=(6, 0))
 
         columns = ("status", "site", "search", "links", "followed", "time")
         self.results_tree = ttk.Treeview(results_panel, columns=columns, show="headings", selectmode="browse")
         self.results_tree.heading("status", text="")
         self.results_tree.heading("site", text="Site")
-        self.results_tree.heading("search", text="Search URL")
+        self.results_tree.heading("search", text="Pages checked")
         self.results_tree.heading("links", text="Search links")
         self.results_tree.heading("followed", text="Followed")
         self.results_tree.heading("time", text="Time")
         self.results_tree.column("status", width=42, minwidth=36, stretch=False, anchor=tk.CENTER)
-        self.results_tree.column("site", width=180, minwidth=120, stretch=False)
-        self.results_tree.column("search", width=420, minwidth=220, stretch=True)
-        self.results_tree.column("links", width=104, minwidth=86, stretch=False, anchor=tk.E)
-        self.results_tree.column("followed", width=82, minwidth=70, stretch=False, anchor=tk.E)
-        self.results_tree.column("time", width=78, minwidth=64, stretch=False, anchor=tk.E)
+        self.results_tree.column("site", width=120, minwidth=95, stretch=False)
+        self.results_tree.column("search", width=250, minwidth=130, stretch=True)
+        self.results_tree.column("links", width=92, stretch=False, anchor=tk.E)
+        self.results_tree.column("followed", width=74, stretch=False, anchor=tk.E)
+        self.results_tree.column("time", width=65, stretch=False, anchor=tk.E)
         self.results_tree.tag_configure("found", foreground=_SUCCESS)
         self.results_tree.tag_configure("empty", foreground=_MUTED)
         self.results_tree.tag_configure("error", foreground=_DANGER)
         self.results_tree.bind("<<TreeviewSelect>>", self._on_tree_select)
-        self.results_tree.grid(row=1, column=0, sticky="nsew")
+        self.results_tree.grid(row=2, column=0, sticky="nsew")
 
         tree_scroll = ttk.Scrollbar(results_panel, orient=tk.VERTICAL, command=self.results_tree.yview)
         self.results_tree.configure(yscrollcommand=tree_scroll.set)
-        tree_scroll.grid(row=1, column=1, sticky="ns")
+        tree_scroll.grid(row=2, column=1, sticky="ns")
 
         detail_panel = ttk.Frame(self.main_pane, style="Panel.TFrame", padding=10)
         detail_panel.columnconfigure(0, weight=1)
@@ -313,11 +331,13 @@ class DeepSearchApp(tk.Tk):
             detail_panel,
             wrap=tk.WORD,
             cursor="arrow",
-            font=_FONT_MONO,
+            font=_FONT,
             bg=_PANEL,
             fg=_FG,
-            relief="solid",
-            borderwidth=1,
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=_BORDER,
+            highlightcolor=_ACCENT,
             padx=12,
             pady=10,
             selectbackground=_ACCENT,
@@ -335,6 +355,7 @@ class DeepSearchApp(tk.Tk):
         self.text.tag_configure("muted", foreground=_MUTED)
         self.text.tag_configure("match", foreground=_SUCCESS)
         self.text.tag_configure("error", foreground=_DANGER)
+        self._append("Run a search to see the pages checked and the links found here.\n", "muted")
 
         self._build_log_panel(workspace)
 
@@ -422,6 +443,81 @@ class DeepSearchApp(tk.Tk):
             self.sites_path.set(path)
             self._save_gui_settings()
 
+    def _edit_site_paths(self) -> None:
+        path = Path(self.sites_path.get().strip()).resolve()
+        try:
+            sites = load_sites_config(path)
+        except (OSError, ValueError) as error:
+            messagebox.showerror("Cannot load sites", str(error), parent=self)
+            return
+        if not sites:
+            messagebox.showinfo("Site paths", "The configuration contains no sites.", parent=self)
+            return
+
+        dialog, panel = self._open_dialog("Site paths")
+        overrides = self._page_overrides.setdefault(path, {})
+        site = tk.StringVar(value=next(iter(sites)))
+        caption = tk.StringVar()
+        ttk.Label(panel, text="Site", style="Panel.TLabel", font=_FONT_BOLD).grid(row=0, column=0, sticky="w")
+        selector = ttk.Combobox(panel, textvariable=site, values=list(sites), state="readonly")
+        selector.grid(row=1, column=0, sticky="ew", pady=(4, 10))
+        ttk.Label(panel, textvariable=caption, style="Hint.TLabel", wraplength=440).grid(row=2, column=0, sticky="w")
+        ttk.Label(
+            panel, text="One path per line. Use / for the home page or /mail for a subpage.",
+            style="Hint.TLabel", wraplength=440,
+        ).grid(row=3, column=0, sticky="w", pady=(12, 4))
+        editor = tk.Text(
+            panel, width=50, height=8, font=_FONT_MONO, wrap=tk.NONE, padx=8, pady=8,
+            relief="flat", highlightthickness=1, highlightbackground=_BORDER, highlightcolor=_ACCENT,
+        )
+        editor.grid(row=4, column=0, sticky="nsew")
+        scroll = ttk.Scrollbar(panel, orient=tk.VERTICAL, command=editor.yview)
+        scroll.grid(row=4, column=1, sticky="ns")
+        editor.configure(yscrollcommand=scroll.set)
+        panel.rowconfigure(4, weight=1)
+        ttk.Label(panel, text="Overrides last until the app closes.", style="Hint.TLabel").grid(
+            row=5, column=0, sticky="w", pady=(6, 0)
+        )
+
+        def load_selection(_event=None) -> None:
+            name = site.get()
+            config = sites[name]
+            builder = config.get("path_builder") or {}
+            paths = overrides.get(name, builder.get("paths", []))
+            mode = "Session override" if name in overrides else "Sites JSON"
+            if not paths:
+                mode = f"Configured route: {builder.get('pattern') or config['search_template']}"
+            caption.set(f"{config['base_url']}\n{mode}")
+            editor.delete("1.0", tk.END)
+            editor.insert("1.0", "\n".join(paths))
+
+        def apply_paths() -> None:
+            lines = [line.strip() for line in editor.get("1.0", "end-1c").splitlines() if line.strip()]
+            try:
+                overrides[site.get()] = normalize_page_paths(lines)
+            except ValueError as error:
+                messagebox.showerror("Invalid paths", str(error), parent=dialog)
+                return
+            self.status_var.set(f"Site paths updated for {site.get()}")
+            load_selection()
+
+        def reset_paths() -> None:
+            overrides.pop(site.get(), None)
+            self.status_var.set(f"Using JSON defaults for {site.get()}")
+            load_selection()
+
+        actions = ttk.Frame(panel, style="Panel.TFrame")
+        actions.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(14, 0))
+        actions.columnconfigure(1, weight=1)
+        ttk.Button(actions, text="Reset to JSON", command=reset_paths).grid(row=0, column=0, sticky="w")
+        ttk.Button(actions, text="Done", command=dialog.destroy).grid(row=0, column=2, padx=(8, 0))
+        ttk.Button(actions, text="Apply paths", style="Accent.TButton", command=apply_paths).grid(
+            row=0, column=3, padx=(8, 0)
+        )
+        selector.bind("<<ComboboxSelected>>", load_selection)
+        load_selection()
+        selector.focus_set()
+
     def _start_search(self) -> None:
         if self._running:
             return
@@ -460,6 +556,7 @@ class DeepSearchApp(tk.Tk):
         )
         max_workers = max(1, self.workers_var.get())
         use_cache = self.cache_var.get()
+        overrides = self._page_overrides.get(Path(sites_path).resolve(), {}).copy()
 
         self._set_running(True)
         self._clear_results()
@@ -468,7 +565,7 @@ class DeepSearchApp(tk.Tk):
 
         thread = threading.Thread(
             target=self._search_worker,
-            args=(sites_path, req, max_workers, use_cache),
+            args=(sites_path, req, max_workers, use_cache, overrides),
             daemon=True,
         )
         thread.start()
@@ -477,9 +574,11 @@ class DeepSearchApp(tk.Tk):
         self._running = running
         self.search_button.configure(state=tk.DISABLED if running else tk.NORMAL)
         if running:
+            self.progress.grid()
             self.progress.start(12)
         else:
             self.progress.stop()
+            self.progress.grid_remove()
 
     def _clear_results(self) -> None:
         self.latest_results = {}
@@ -490,9 +589,18 @@ class DeepSearchApp(tk.Tk):
             self.results_tree.delete(item)
         self.text.delete("1.0", tk.END)
 
-    def _search_worker(self, sites_path: str, req: SearchRequest, max_workers: int, use_cache: bool) -> None:
+    def _search_worker(
+        self, sites_path: str, req: SearchRequest, max_workers: int, use_cache: bool, overrides: dict[str, list[str]],
+    ) -> None:
         try:
             sites = load_sites_config(sites_path)
+            for name, paths in overrides.items():
+                if name in sites:
+                    builder = sites[name].get("path_builder") or {}
+                    sites[name]["path_builder"] = {
+                        "paths": paths,
+                        "prefer_query_links": builder.get("prefer_query_links", True),
+                    }
 
             def progress(msg: str) -> None:
                 self.after(0, self._on_progress, msg)
@@ -523,20 +631,16 @@ class DeepSearchApp(tk.Tk):
         self._render_results(results)
 
     def _render_results(self, results: dict[str, SiteResult]) -> None:
-        self._rendered_results = {
-            site: data
-            for site, data in results.items()
-            if data.urls
-        }
+        self._rendered_results = results
         for item in self.results_tree.get_children():
             self.results_tree.delete(item)
 
         for site, data in self._rendered_results.items():
             if data.error:
-                marker = "ERR"
+                marker = "!"
                 tag = "error"
-            elif data.urls:
-                marker = "OK"
+            elif data.found:
+                marker = "✓"
                 tag = "found"
             else:
                 marker = "-"
@@ -559,7 +663,7 @@ class DeepSearchApp(tk.Tk):
 
         total_urls = sum(len(r.urls) for r in self.latest_results.values())
         self.summary_var.set(
-            f"Search pages: {len(self._rendered_results)}/{len(self.latest_results)}    Search links: {total_urls}"
+            f"Sites shown: {len(self._rendered_results)}/{len(self.latest_results)}    Search links: {total_urls}"
             if self.latest_results else "No search yet"
         )
         self.status_var.set("Ready" if self.latest_results else "No results")
@@ -571,13 +675,13 @@ class DeepSearchApp(tk.Tk):
             self._show_site_details(first)
         else:
             self.text.delete("1.0", tk.END)
-            self._append("No search-level links in this view.\n", "muted")
+            self._append("No sites in this view.\n", "muted")
 
     def _short_search_url(self, search_url: str) -> str:
         if not search_url:
             return "-"
-        first_url = search_url.split(" | ", 1)[0]
-        return first_url if len(first_url) <= 90 else first_url[:87] + "..."
+        first_url, *remaining = search_url.split(" | ")
+        return f"{len(remaining) + 1} pages" if remaining else first_url
 
     def _on_tree_select(self, _event) -> None:
         selected = self.results_tree.selection()
@@ -594,24 +698,29 @@ class DeepSearchApp(tk.Tk):
 
         self._append(f"{data.site_name}\n", "header")
         self._append(f"Base: {data.base_url}\n", "muted")
-        self._append("Search: ", "muted")
+        self._append("Pages checked\n", "header")
         if data.search_url:
-            for index, url in enumerate(data.search_url.split(" | "), 1):
-                if index > 1:
-                    self._append(" | ", "muted")
+            for url in data.search_url.split(" | "):
                 self._append_url(url)
-            self._append("\n")
+                self._append("\n")
         else:
             self._append("-\n", "muted")
 
-        status = "found" if data.urls else "empty"
+        status = "found" if data.found else "empty"
         if data.error:
             status = "error"
         self._append(f"Status: {status}    HTTP: {data.status_code or '-'}    Time: {data.elapsed_sec:.2f}s\n\n")
 
         if data.error:
             self._append(f"{data.error}\n", "error")
+            self.text.see("1.0")
             return
+
+        if data.matches:
+            self._append("Matches\n", "header")
+            for match in data.matches:
+                self._append(f"{match.text}\n", "match")
+            self._append("\n")
 
         self._append(f"Search results ({len(data.urls)})\n", "header")
         if data.urls:
@@ -642,6 +751,7 @@ class DeepSearchApp(tk.Tk):
                     self._append("   No extracted details.\n", "muted")
         else:
             self._append("No followed pages.\n", "muted")
+        self.text.see("1.0")
 
     def _append(self, message: str, *tags: str) -> None:
         self.text.insert(tk.END, message, tags if tags else ())
