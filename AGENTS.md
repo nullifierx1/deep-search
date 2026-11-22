@@ -6,6 +6,7 @@
 
 | Путь | Назначение |
 | --- | --- |
+| `frontend/` | Веб-клиент с собственными зависимостями, сборкой и тестами. Граница интеграции проходит по HTTP API `/api/v1`. |
 | `python_deep_search/api.py` | HTTP API, проверка входных данных, жизненный цикл задач, прогресс по сайтам. |
 | `python_deep_search/history.py` | SQLite-история, восстановление результатов, завершение прерванных задач после перезапуска. |
 | `python_deep_search/search_engine.py` | Поиск по исходным страницам, обход ссылок, отмена и правила остановки. |
@@ -14,7 +15,7 @@
 | `python_deep_search/config.py`, `python_deep_search/json-sites-examples/` | Формат каталога, конфиги сайтов и их значения по умолчанию. |
 | `python_deep_search/models.py`, `python_deep_search/output.py` | Модели движка, экспорт результатов. |
 | `python_deep_search/cache.py` | Кеш результатов, настройки и логи. |
-| `python_deep_search/main.py`, `cli.py`, `gui.py` внутри пакета | Точки входа консоли и Tkinter. |
+| `python_deep_search/main.py`, `cli.py`, `gui.py` внутри пакета | Точки входа существующих клиентов CLI и Tkinter, которые используют Python-движок напрямую. |
 | `tests/` | Тесты движка, сетевого слоя, GUI и сценариев HTTP. |
 
 ## Запуск и проверка
