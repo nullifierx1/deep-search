@@ -361,6 +361,7 @@ def _follow_pages(
     seen = checked | set(seeds)
     allowed_origin = _origin(site_config["base_url"])
     empty = 0
+    seen_matches: set[str] = set()
     while queue:
         if cancel.is_set():
             return results, "cancelled"
@@ -387,7 +388,9 @@ def _follow_pages(
                         if link not in seen and _origin(link) == allowed_origin:
                             seen.add(link)
                             queue.append((link, depth + 1))
-            empty = 0 if result.matches else empty + 1
+            texts = {match.text for match in result.matches}
+            empty = 0 if texts - seen_matches else empty + 1
+            seen_matches.update(texts)
         results.append(result)
         if req.stop_after_empty and empty >= req.stop_after_empty:
             return results, "empty_limit"
@@ -455,10 +458,10 @@ def search_site(
                     dedupe=site_config.get("dedupe"),
                 )
                 links = [link for link in links if link != url]
-                if links or matches:
-                    empty = 0
-                else:
-                    empty += 1
+                discovered = any(link not in all_links for link in links) or any(
+                    match.text not in all_matches for match in matches
+                )
+                empty = 0 if discovered else empty + 1
                 for link in links:
                     all_links[link] = None
                 for match in matches:

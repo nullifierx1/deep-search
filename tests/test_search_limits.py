@@ -28,6 +28,19 @@ def test_pagination_stops_after_consecutive_empty_pages(monkeypatch):
     assert not result.found
 
 
+def test_repeated_pagination_results_do_not_reset_empty_streak(monkeypatch):
+    base = "https://example.test"
+    body = '<a href="/thread">The same result</a>'
+    fetched = _mock_pages(monkeypatch, {base + "/1": body, base + "/2": body})
+    result = search_site(
+        "example", {"base_url": base, "path_builder": {"paths": ["/1", "/2", "/3"]}},
+        SearchRequest("needle", "", follow_links=False, stop_after_empty=1),
+    )
+    assert fetched == [base + "/1", base + "/2"]
+    assert result.urls == [base + "/thread"]
+    assert result.search_stop_reason == "empty_limit"
+
+
 def test_deep_follow_uses_breadth_first_order_and_stops_on_empty_pages(monkeypatch):
     base = "https://example.test"
     fetched = _mock_pages(monkeypatch, {
