@@ -1,3 +1,6 @@
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
 from python_deep_search import cache
 from python_deep_search.cache import _query_key
 from python_deep_search.models import SearchRequest, SiteResult
@@ -26,3 +29,24 @@ def test_cached_results_preserve_checked_page_urls(tmp_path, monkeypatch) -> Non
     })
 
     assert deep_search(sites=sites, req=request)["example"].search_url == checked
+
+
+
+def test_concurrent_settings_writes_preserve_each_key(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(cache, "SETTINGS_FILE", tmp_path / "settings.json")
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(lambda key: cache.set_setting(str(key), "value"), range(30)))
+    assert all(cache.get_setting(str(key)) == "value" for key in range(30))
+
+
+def test_failed_cache_replace_leaves_previous_settings_intact(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(cache, "SETTINGS_FILE", tmp_path / "settings.json")
+    cache.set_setting("key", "original")
+
+    def fail(*_):
+        raise PermissionError("file locked")
+
+    monkeypatch.setattr(Path, "replace", fail)
+    cache.set_setting("key", "replacement")
+    assert cache.get_setting("key") == "original"
+    assert list(tmp_path.iterdir()) == [cache.SETTINGS_FILE]

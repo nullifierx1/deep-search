@@ -4,8 +4,9 @@ import hashlib
 import json
 import logging
 import time
-from dataclasses import asdict
 from pathlib import Path
+from tempfile import NamedTemporaryFile
+from threading import RLock
 from typing import Any
 
 from .models import SearchRequest, SiteResult
@@ -19,26 +20,36 @@ RESULTS_TTL = 30 * 24 * 3600
 LOG_TTL = 24 * 3600
 LOG_MAX_LINES = 500
 CACHE_SCHEMA_VERSION = 10
-
-
-def _ensure_cache_dir() -> None:
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+_lock = RLock()
 
 
 def _read_json(path: Path) -> dict:
-    if not path.exists():
-        return {}
-    try:
-        with path.open("r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return {}
+    with _lock:
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (ValueError, OSError):
+            return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _write_json(path: Path, data: dict) -> None:
-    _ensure_cache_dir()
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    temp = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as f:
+            temp = Path(f.name)
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        temp.replace(path)
+    except OSError:
+        if path != LOG_FILE:
+            logging.getLogger(__name__).warning("Could not write cache file %s", path)
+    finally:
+        if temp is not None:
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def _sites_hash(sites: dict) -> str:
@@ -67,24 +78,19 @@ def _query_key(req: SearchRequest, sites: dict) -> str:
 
 def _prune_expired(data: dict, ttl: int) -> dict:
     now = time.time()
-    return {k: v for k, v in data.items() if now - v.get("ts", 0) < ttl}
+    return {k: v for k, v in data.items() if isinstance(v, dict) and now - v.get("ts", 0) < ttl}
 
 
 def get_cached_results(req: SearchRequest, sites: dict) -> dict[str, Any] | None:
     cache = _read_json(RESULTS_FILE)
     key = _query_key(req, sites)
     entry = cache.get(key)
-    if entry is None:
-        return None
-    if time.time() - entry.get("ts", 0) > RESULTS_TTL:
-        del cache[key]
-        _write_json(RESULTS_FILE, cache)
+    if not isinstance(entry, dict) or time.time() - entry.get("ts", 0) > RESULTS_TTL:
         return None
     return entry.get("results")
 
 
 def set_cached_results(req: SearchRequest, sites: dict, results: dict[str, SiteResult]) -> None:
-    cache = _prune_expired(_read_json(RESULTS_FILE), RESULTS_TTL)
     key = _query_key(req, sites)
     serializable: dict[str, Any] = {}
     for name, r in results.items():
@@ -110,8 +116,10 @@ def set_cached_results(req: SearchRequest, sites: dict, results: dict[str, SiteR
             "follow_stop_reason": r.follow_stop_reason,
             "network_errors": r.network_errors,
         }
-    cache[key] = {"ts": time.time(), "query": req.query, "results": serializable}
-    _write_json(RESULTS_FILE, cache)
+    with _lock:
+        cache = _prune_expired(_read_json(RESULTS_FILE), RESULTS_TTL)
+        cache[key] = {"ts": time.time(), "query": req.query, "results": serializable}
+        _write_json(RESULTS_FILE, cache)
 
 
 def get_setting(key: str, default: str = "") -> str:
@@ -120,9 +128,10 @@ def get_setting(key: str, default: str = "") -> str:
 
 
 def set_setting(key: str, value: str) -> None:
-    settings = _read_json(SETTINGS_FILE)
-    settings[key] = value
-    _write_json(SETTINGS_FILE, settings)
+    with _lock:
+        settings = _read_json(SETTINGS_FILE)
+        settings[key] = value
+        _write_json(SETTINGS_FILE, settings)
 
 
 def get_cached_logs() -> list[dict[str, Any]]:
@@ -133,12 +142,11 @@ def get_cached_logs() -> list[dict[str, Any]]:
 
 
 def append_log_entry(level: str, message: str) -> None:
-    data = _read_json(LOG_FILE)
-    entries = data.get("entries", [])
-    entries.append({"ts": time.time(), "level": level, "msg": message})
-    if len(entries) > LOG_MAX_LINES:
-        entries = entries[-LOG_MAX_LINES:]
-    _write_json(LOG_FILE, {"entries": entries})
+    with _lock:
+        data = _read_json(LOG_FILE)
+        entries = data.get("entries", [])
+        entries.append({"ts": time.time(), "level": level, "msg": message})
+        _write_json(LOG_FILE, {"entries": entries[-LOG_MAX_LINES:]})
 
 
 class LogCacheHandler(logging.Handler):
