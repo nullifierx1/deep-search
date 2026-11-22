@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .config import load_sites_config, normalize_page_paths
+from .cache import manage_results_cache
 from .history import SearchHistory
 from .models import SearchRequest, SiteResult
 from .output import to_serializable
@@ -246,6 +247,20 @@ def make_server(
             v1 = path.startswith("/api/v1/")
             if v1:
                 path = "/api/" + path.removeprefix("/api/v1/")
+            if v1 and path == "/api/cache" and self.command in {"GET", "POST"}:
+                try:
+                    action = None
+                    if self.command == "POST":
+                        body = self._read_body()
+                        if body not in ({"action": "expired"}, {"action": "all"}):
+                            raise ValueError("Expected cache action 'expired' or 'all'")
+                        action = body["action"]
+                    self._respond(200, manage_results_cache(action))
+                except ValueError as error:
+                    self._respond(400, {"error": str(error)})
+                except OSError as error:
+                    self._respond(500, {"error": str(error)})
+                return
             if self.command == "GET" and path == "/api/sites":
                 self._respond(200, {"sites": [
                     {"id": name, "base_url": cfg["base_url"],

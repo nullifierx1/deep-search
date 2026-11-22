@@ -1,12 +1,37 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Event, Thread
-from time import monotonic, sleep
+from time import monotonic, sleep, time
+import json
 
 import requests
 
 from python_deep_search import api
+from python_deep_search import cache
 from python_deep_search.history import SearchHistory
 from python_deep_search.models import SiteResult
+
+
+def test_cache_endpoint_reports_and_clears_results_only(tmp_path, monkeypatch):
+    results = tmp_path / "results.json"
+    settings = tmp_path / "settings.json"
+    monkeypatch.setattr(cache, "RESULTS_FILE", results)
+    monkeypatch.setattr(cache, "SETTINGS_FILE", settings)
+    cache.set_setting("view", "results")
+    results.write_text(json.dumps({"fresh": {"ts": time()}, "old": {"ts": time() - cache.RESULTS_TTL - 1}}))
+    with api.make_server(0, {}) as server:
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        endpoint = f"http://127.0.0.1:{server.server_port}/api/v1/cache"
+        try:
+            assert requests.get(endpoint, timeout=3).json()["expired"] == 1
+            assert requests.post(endpoint, json={"action": "expired"}, timeout=3).json()["removed"] == 1
+            assert set(json.loads(results.read_text())) == {"fresh"}
+            assert requests.post(endpoint, json={"action": "all"}, timeout=3).json()["removed"] == 1
+            assert json.loads(results.read_text()) == {}
+            assert cache.get_setting("view") == "results"
+        finally:
+            server.shutdown()
+            thread.join()
 
 
 def test_http_catalog_search_progress_and_cancellation(monkeypatch):

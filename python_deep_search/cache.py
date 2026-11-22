@@ -33,7 +33,7 @@ def _read_json(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _write_json(path: Path, data: dict) -> None:
+def _write_json(path: Path, data: dict) -> bool:
     temp = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -41,6 +41,7 @@ def _write_json(path: Path, data: dict) -> None:
             temp = Path(f.name)
             json.dump(data, f, ensure_ascii=False, indent=2)
         temp.replace(path)
+        return True
     except OSError:
         if path != LOG_FILE:
             logging.getLogger(__name__).warning("Could not write cache file %s", path)
@@ -50,6 +51,7 @@ def _write_json(path: Path, data: dict) -> None:
                 temp.unlink(missing_ok=True)
             except OSError:
                 pass
+    return False
 
 
 def _sites_hash(sites: dict) -> str:
@@ -79,16 +81,29 @@ def _query_key(req: SearchRequest, sites: dict) -> str:
 
 def _prune_expired(data: dict, ttl: int) -> dict:
     now = time.time()
-    return {k: v for k, v in data.items() if isinstance(v, dict) and now - v.get("ts", 0) < ttl}
+    return {k: v for k, v in data.items() if isinstance(v, dict)
+            and isinstance(v.get("ts"), (int, float)) and now - v["ts"] < ttl}
+
+
+def manage_results_cache(action: str | None = None) -> dict:
+    with _lock:
+        entries = _read_json(RESULTS_FILE)
+        fresh = _prune_expired(entries, RESULTS_TTL)
+        remaining = {"all": {}, "expired": fresh}.get(action, entries)
+        if remaining != entries and not _write_json(RESULTS_FILE, remaining):
+            raise OSError("Could not update results cache")
+        return {
+            "valid": len(fresh) if action != "all" else 0,
+            "expired": len(entries) - len(fresh) if action is None else 0,
+            "ttl_seconds": RESULTS_TTL,
+            "removed": len(entries) - len(remaining),
+        }
 
 
 def get_cached_results(req: SearchRequest, sites: dict) -> dict[str, Any] | None:
     cache = _read_json(RESULTS_FILE)
     key = _query_key(req, sites)
-    entry = cache.get(key)
-    if not isinstance(entry, dict) or time.time() - entry.get("ts", 0) > RESULTS_TTL:
-        return None
-    return entry.get("results")
+    return _prune_expired({key: cache.get(key)}, RESULTS_TTL).get(key, {}).get("results")
 
 
 def set_cached_results(req: SearchRequest, sites: dict, results: dict[str, SiteResult]) -> None:
