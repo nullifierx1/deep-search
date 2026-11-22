@@ -61,18 +61,43 @@ def _normalize_params(raw_params) -> dict[str, str] | None:
     return None
 
 
+def normalize_page_paths(paths: list[str]) -> list[str]:
+    if not isinstance(paths, list) or not paths or any(
+        not isinstance(path, str)
+        or not path.startswith("/")
+        or path.startswith("//")
+        or "\\" in path
+        for path in paths
+    ):
+        raise ValueError("Enter one path per line, starting with a single slash (for example /mail).")
+    return list(dict.fromkeys(paths))
+
+
 def _normalize_path_builder(raw) -> dict | None:
     if raw is None:
         return None
     if isinstance(raw, dict):
+        paths = raw.get("paths")
+        if paths is not None:
+            return {
+                "paths": normalize_page_paths(paths),
+                "prefer_query_links": bool(raw.get("prefer_query_links", False)),
+            }
         return {
             "pattern": str(raw.get("pattern", "")),
             "start": int(raw.get("start", 1)),
             "end": int(raw.get("end", 1)),
             "step": int(raw.get("step", 1)),
+            "prefer_query_links": bool(raw.get("prefer_query_links", False)),
         }
     if isinstance(raw, str):
-        return {"pattern": raw, "start": 1, "end": 1, "step": 1}
+        return {
+            "pattern": raw,
+            "start": 1,
+            "end": 1,
+            "step": 1,
+            "prefer_query_links": False,
+        }
     return None
 
 
