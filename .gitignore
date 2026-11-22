@@ -15,8 +15,8 @@ build/
 # Cache
 python_deep_search/.cache/
 
-# Next.js frontend (not part of Python project)
-src/
-node_modules/
-.next/
-package-lock.json
+# Web frontend
+/frontend/node_modules/
+/frontend/.next/
+/frontend/.vite/
+/frontend/coverage/
