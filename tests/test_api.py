@@ -5,6 +5,7 @@ from time import monotonic, sleep
 import requests
 
 from python_deep_search import api
+from python_deep_search.history import SearchHistory
 from python_deep_search.models import SiteResult
 
 
@@ -112,3 +113,73 @@ def test_http_search_crawls_a_local_site_to_the_requested_depth():
                 server.shutdown()
                 for thread in threads:
                     thread.join()
+
+
+def test_history_and_retry_survive_api_restart(tmp_path, monkeypatch):
+    catalog = {name: {"base_url": f"https://{name}.test"} for name in ("first", "second")}
+    path = tmp_path / "searches.sqlite3"
+    calls = []
+
+    def search(sites, request, *, cancel, result_callback, stage_callback, use_cache):
+        calls.append((sites, use_cache))
+        results = {}
+        for name, config in sites.items():
+            result = SiteResult(name, config["base_url"], config["base_url"] + "/page", False)
+            results[name] = result
+            result_callback(result)
+        return results
+
+    monkeypatch.setattr(api, "deep_search", search)
+
+    def wait_for_job(endpoint):
+        deadline = monotonic() + 3
+        while monotonic() < deadline:
+            result = requests.get(endpoint, timeout=3).json()
+            if result["status"] == "completed":
+                return result
+            sleep(0.02)
+        raise AssertionError("Search did not complete")
+
+    for restart in (False, True):
+        with api.make_server(0, catalog, history_path=path) as server:
+            worker = Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            endpoint = f"http://127.0.0.1:{server.server_port}/api/v1/searches"
+            try:
+                if not restart:
+                    response = requests.post(endpoint, json={
+                        "sites": ["first", "second"], "query": "needle", "paths": {"second": ["/page"]},
+                    }, timeout=3)
+                    assert response.status_code == 202
+                    job_id = response.json()["id"]
+                    wait_for_job(endpoint + "/" + job_id)
+                else:
+                    original = wait_for_job(endpoint + "/" + job_id)
+                    assert original["finished_sites"] == 2
+                    history = requests.get(endpoint + "?limit=1", timeout=3).json()
+                    assert history["searches"][0]["id"] == job_id
+                    retry = requests.post(endpoint + "/" + job_id + "/retry", json={"sites": ["second"]}, timeout=3)
+                    assert retry.status_code == 202
+                    repeated = wait_for_job(endpoint + "/" + retry.json()["id"])
+                    assert list(repeated["results"]) == ["second"]
+                    assert calls[-1][0]["second"]["path_builder"]["paths"] == ["/page"]
+                    assert calls[-1][1] is False
+            finally:
+                server.shutdown()
+                worker.join()
+
+
+def test_unfinished_history_is_marked_interrupted_at_restart(tmp_path):
+    path = tmp_path / "searches.sqlite3"
+    history = SearchHistory(path)
+    history.save({
+        "id": "job", "created_at": 123, "status": "running", "total_sites": 2, "finished_sites": 1,
+        "site_progress": {"ready": {"stage": "finished", "reason": "found"},
+                          "waiting": {"stage": "queued", "reason": None}},
+        "results": {"ready": {"search_url": "https://example.test/"}},
+    })
+    saved = SearchHistory(path).get("job")
+    assert saved["status"] == "interrupted"
+    assert saved["finished_sites"] == 2
+    assert saved["site_progress"]["waiting"]["reason"] == "interrupted"
+    assert "ready" in saved["results"]
