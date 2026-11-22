@@ -10,11 +10,11 @@ from queue import Queue
 from threading import Event
 from typing import Callable, Iterator
 import re as _re
-from urllib.parse import quote_plus, urljoin as _urljoin_imp, urlparse as _urlparse_imp
+from urllib.parse import quote_plus, urldefrag, urljoin as _urljoin_imp, urlparse as _urlparse_imp
 
 import requests
 
-from .extractors import clean_text, extract_links, extract_query_snippets, extract_regex_matches
+from .extractors import _dedupe_key, clean_text, extract_links, extract_query_snippets, extract_regex_matches
 from .models import FollowResult, SearchMatch, SearchRequest, SiteResult
 from .network import SOURCE_STOP, SearchSession, is_challenge
 from . import cache
@@ -373,8 +373,9 @@ def _follow_pages(
     if not req.follow_links or not follow.get("enabled", True):
         return results, None
 
-    queue = deque((url, 1) for url in seeds if url not in checked)
-    seen = checked | set(seeds)
+    dedupe = site_config.get("dedupe")
+    queue = deque((url, 1) for url in seeds)
+    seen = checked | {_dedupe_key(url, dedupe) for url in seeds}
     allowed_origin = _origin(site_config["base_url"])
     empty = 0
     seen_matches: set[str] = set()
@@ -395,14 +396,15 @@ def _follow_pages(
             result.error = (session.failure if isinstance(session, SearchSession) else None) or "page_unavailable"
         else:
             links, result.matches = _extract_from_page(
-                body, url, req, link_rules=site_config.get("link_rules"), dedupe=site_config.get("dedupe"),
+                body, url, req, link_rules=site_config.get("link_rules"), dedupe=dedupe,
             )
             if follow.get("collect_child_links", True):
                 result.urls = _filter_child_links(links, seeds, req.max_links)
                 if depth < req.follow_depth:
                     for link in result.urls:
-                        if link not in seen and _origin(link) == allowed_origin:
-                            seen.add(link)
+                        key = _dedupe_key(link, dedupe)
+                        if key not in seen and _origin(link) == allowed_origin:
+                            seen.add(key)
                             queue.append((link, depth + 1))
             texts = {match.text for match in result.matches}
             empty = 0 if texts - seen_matches else empty + 1
@@ -436,15 +438,17 @@ def search_site(
         "Referer": base_url + "/",
     }
     builder = site_config.get("path_builder")
+    dedupe = site_config.get("dedupe")
     checked: dict[str, str | None] = {}
     all_matches: dict[str, SearchMatch] = {}
-    all_links: dict[str, None] = {}
+    all_links: dict[str, str] = {}
     try:
         for query in _expand_query(req.query):
             query_req = replace(req, query=query)
             empty = 0
             query_pages: set[str] = set()
-            for url in _seed_urls(site_config, query):
+            for raw_url in _seed_urls(site_config, query):
+                url = urldefrag(raw_url).url
                 if cancel.is_set():
                     result.search_stop_reason = "cancelled"
                     break
@@ -476,15 +480,17 @@ def search_site(
                     include_query_snippets=bool(builder and builder.get("paths")),
                     prefer_query_links=builder.get("prefer_query_links", False) if builder else True,
                     link_rules=site_config.get("link_rules"),
-                    dedupe=site_config.get("dedupe"),
+                    dedupe=dedupe,
                 )
-                links = [link for link in links if link != url]
-                discovered = any(link not in all_links for link in links) or any(
+                current_key = _dedupe_key(url, dedupe)
+                keyed_links = {_dedupe_key(link, dedupe): link for link in links}
+                keyed_links.pop(current_key, None)
+                discovered = any(key not in all_links for key in keyed_links) or any(
                     match.text not in all_matches for match in matches
                 )
                 empty = 0 if discovered else empty + 1
-                for link in links:
-                    all_links[link] = None
+                for key, link in keyed_links.items():
+                    all_links.setdefault(key, link)
                 for match in matches:
                     all_matches.setdefault(match.text, match)
                 if req.stop_after_empty and empty >= req.stop_after_empty:
@@ -499,10 +505,11 @@ def search_site(
         if cancel.is_set():
             result.search_stop_reason = "cancelled"
         result.search_url = " | ".join(checked)
-        result.urls = [url for url in all_links if url not in checked][:req.max_links]
+        checked_keys = {_dedupe_key(url, dedupe) for url in checked}
+        result.urls = [url for key, url in all_links.items() if key not in checked_keys][:req.max_links]
         if result.search_stop_reason not in SOURCE_STOP:
             result.followed, result.follow_stop_reason = _follow_pages(
-                result.urls, set(checked), site_config, req, sess, headers, cancel,
+                result.urls, checked_keys, site_config, req, sess, headers, cancel,
             )
         for page in result.followed:
             for match in page.matches:

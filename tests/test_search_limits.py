@@ -41,6 +41,22 @@ def test_repeated_pagination_results_do_not_reset_empty_streak(monkeypatch):
     assert result.search_stop_reason == "empty_limit"
 
 
+def test_canonical_duplicates_across_seed_pages_are_fetched_once(monkeypatch):
+    base = "https://example.test"
+    fetched = _mock_pages(monkeypatch, {
+        base + "/1": '<a href="/thread?tracking=one">Result</a>',
+        base + "/2": '<a href="/thread?tracking=two">Result</a>',
+        base + "/thread?tracking=one": "<p>needle evidence on this page</p>",
+    })
+    result = search_site(
+        "example", {"base_url": base, "path_builder": {"paths": ["/1", "/2#section"]},
+                    "dedupe": {"ignore_query": True}},
+        SearchRequest("needle", "", follow_depth=2),
+    )
+    assert fetched == [base + "/1", base + "/2", base + "/thread?tracking=one"]
+    assert result.urls == [base + "/thread?tracking=one"]
+
+
 def test_deep_follow_uses_breadth_first_order_and_stops_on_empty_pages(monkeypatch):
     base = "https://example.test"
     fetched = _mock_pages(monkeypatch, {
