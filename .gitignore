@@ -15,6 +15,11 @@ build/
 # Cache
 python_deep_search/.cache/
 
+# Local site catalogs
+/python_deep_search/json-sites-examples/lk-sites.json
+/python_deep_search/json-sites-examples/bunkr.json
+/python_deep_search/json-sites-local/
+
 # Web frontend
 /frontend/node_modules/
 /frontend/.next/

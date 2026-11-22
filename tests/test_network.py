@@ -1,3 +1,4 @@
+import json
 from threading import Event
 
 import pytest
@@ -46,10 +47,15 @@ def test_retry_after_is_observed(monkeypatch):
         assert waits == [0, 7, 0]
 
 
-def test_access_denial_is_reported_without_retry_or_browser_fallback(monkeypatch):
-    site = load_sites_config("python_deep_search/json-sites-examples/lk-sites.json")["asmrfree"]
+def test_access_denial_is_reported_without_retry_or_browser_fallback(monkeypatch, tmp_path):
+    catalog = tmp_path / "sites.json"
+    catalog.write_text(json.dumps({"example": {
+        "base_url": "https://example.test",
+        "path_builder": {"paths": ["/"]},
+        "anti_block": {"retry_on_status": [403, 429]},
+    }}), encoding="utf-8")
+    site = load_sites_config(catalog)["example"]
     assert 403 not in site["network"]["retry_on_status"]
-    site["path_builder"] = {"paths": ["/"]}
     urls = []
 
     def get(_session, url, **_kwargs):

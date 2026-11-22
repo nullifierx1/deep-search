@@ -19,7 +19,7 @@ from .output import to_serializable
 from .search_engine import _expand_query, deep_search
 
 _EXAMPLES = Path(__file__).with_name("json-sites-examples")
-_CATALOG = [_EXAMPLES / name for name in ("sites.json", "cppreference.json", "lk-sites.json")]
+_CATALOG = [_EXAMPLES / name for name in ("sites.json", "cppreference.json")]
 _HISTORY = Path(__file__).with_name(".cache") / "search_history.sqlite3"
 _JOB_ROUTE = re.compile(r"/api/searches/([a-f0-9]{32})(?:/(cancel|retry))?")
 _LIMITS = {
