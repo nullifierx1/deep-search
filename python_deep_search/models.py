@@ -33,6 +33,7 @@ class SiteResult:
     error: Optional[str] = None
     search_stop_reason: str | None = None
     follow_stop_reason: str | None = None
+    network_errors: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

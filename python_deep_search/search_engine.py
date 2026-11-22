@@ -16,6 +16,7 @@ import requests
 
 from .extractors import clean_text, extract_links, extract_query_snippets, extract_regex_matches
 from .models import FollowResult, SearchMatch, SearchRequest, SiteResult
+from .network import SearchSession
 from . import cache
 
 logger = logging.getLogger(__name__)
@@ -129,6 +130,8 @@ def _fetch_html_requests(
     headers: dict[str, str],
     timeout: int,
 ) -> str | None:
+    if isinstance(session, SearchSession):
+        return session.fetch(url, headers, timeout)
     last_error: Exception | None = None
     for attempt in range(RETRY_MAX):
         try:
@@ -232,7 +235,7 @@ def _fetch_page(
     if html and _page_has_meaningful_content(html, url):
         return html
 
-    if use_playwright:
+    if use_playwright and (not isinstance(session, SearchSession) or session.can_render):
         logger.info("Пробуем Playwright для %s (контент скудный или JS-скелет)", url)
         pw_html = _fetch_html_playwright(url, timeout)
         if pw_html and _page_has_meaningful_content(pw_html, url):
@@ -250,7 +253,10 @@ def _fetch_search_page(
     use_playwright: bool = True,
 ) -> str | None:
     html = _fetch_page(url, session, headers, timeout, use_playwright)
-    if not html or not use_playwright or _page_mentions_query(html, query):
+    if (
+        not html or not use_playwright or _page_mentions_query(html, query)
+        or (isinstance(session, SearchSession) and not session.can_render)
+    ):
         return html
 
     logger.info("%s: response does not mention query %r; retrying with Playwright", url, query)
@@ -358,13 +364,13 @@ def _follow_pages(
         url, depth = queue.popleft()
         if req.follow_depth > 1 and _origin(url) != allowed_origin:
             continue
-        if cancel.wait(0.5):
+        if not isinstance(session, SearchSession) and cancel.wait(0.5):
             return results, "cancelled"
 
         body = _fetch_page(url, session, headers, req.timeout_sec, req.use_playwright)
         result = FollowResult(source_url=url, depth=depth)
         if body is None:
-            result.error = "Page could not be loaded"
+            result.error = (session.failure if isinstance(session, SearchSession) else None) or "page_unavailable"
         else:
             links, result.matches = _extract_from_page(
                 body, url, req, link_rules=site_config.get("link_rules"), dedupe=site_config.get("dedupe"),
@@ -396,7 +402,7 @@ def search_site(
     cancel = cancel if cancel is not None else Event()
     base_url = site_config["base_url"]
     result = SiteResult(site_name, base_url, "", found=False)
-    sess = session or requests.Session()
+    sess = session if session is not None else SearchSession(cancel, site_config.get("network"))
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -429,6 +435,11 @@ def search_site(
                     )
                 body = checked[url]
                 if body is None:
+                    if first_visit and isinstance(sess, SearchSession):
+                        if result.status_code is None:
+                            result.status_code = sess.status
+                        if sess.failure and sess.failure != "cancelled":
+                            result.network_errors[url] = sess.failure
                     continue
                 result.status_code = 200
                 links, matches = _extract_from_page(
@@ -450,7 +461,7 @@ def search_site(
                 if req.stop_after_empty and empty >= req.stop_after_empty:
                     result.search_stop_reason = "empty_limit"
                     break
-                if first_visit:
+                if first_visit and not isinstance(sess, SearchSession):
                     cancel.wait(0.5)
 
             if cancel.is_set():
@@ -468,7 +479,7 @@ def search_site(
                 all_matches.setdefault(match.text, match)
         result.matches = sorted(all_matches.values(), key=lambda match: -match.score)[:req.max_results]
         result.found = bool(result.matches or result.urls)
-        if checked and result.status_code is None and not cancel.is_set():
+        if checked and not any(body is not None for body in checked.values()) and not cancel.is_set():
             result.error = "No search page could be loaded"
     finally:
         if session is None:
@@ -521,6 +532,7 @@ def deep_search(
                     error=entry.get("error"),
                     search_stop_reason=entry.get("search_stop_reason"),
                     follow_stop_reason=entry.get("follow_stop_reason"),
+                    network_errors=entry.get("network_errors", {}),
                 )
             if result_callback:
                 for result in results.values():
@@ -561,7 +573,10 @@ def deep_search(
                 state = "найдено" if result.found else "пусто"
                 progress_callback(f"{site_name}: {state}")
 
-    if use_cache and results and (cancel is None or not cancel.is_set()) and not any(r.error for r in results.values()):
+    if (
+        use_cache and results and (cancel is None or not cancel.is_set())
+        and not any(r.error or r.network_errors or any(p.error for p in r.followed) for r in results.values())
+    ):
         cache.set_cached_results(req, sites, results)
 
     return results

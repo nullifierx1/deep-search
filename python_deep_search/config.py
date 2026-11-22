@@ -160,6 +160,27 @@ def _normalize_follow(raw) -> dict:
     }
 
 
+def _normalize_network(raw) -> dict:
+    if not isinstance(raw, dict):
+        raise ValueError("Network settings must be an object")
+    minimum = float(raw.get("min_delay_sec", 0.5))
+    maximum = float(raw.get("max_delay_sec", minimum))
+    retries = raw.get("max_retries", 2)
+    statuses = raw.get("retry_on_status", [429, 500, 502, 503, 504])
+    cookies = raw.get("use_cookies", True)
+    if not 0 <= minimum <= maximum <= 60 or type(retries) is not int or not 0 <= retries <= 5:
+        raise ValueError("Invalid network delay or retry limit")
+    if not isinstance(statuses, list) or any(type(code) is not int or not 400 <= code <= 599 for code in statuses):
+        raise ValueError("Invalid HTTP retry status list")
+    if type(cookies) is not bool:
+        raise ValueError("use_cookies must be a boolean")
+    return {
+        "min_delay_sec": minimum, "max_delay_sec": maximum, "max_retries": retries,
+        "retry_on_status": [code for code in dict.fromkeys(statuses) if code not in {401, 403, 407, 451}],
+        "use_cookies": cookies,
+    }
+
+
 def load_sites_config(path: str | Path) -> Dict[str, dict]:
     cfg_path = Path(path)
     if not cfg_path.exists():
@@ -184,6 +205,7 @@ def load_sites_config(path: str | Path) -> Dict[str, dict]:
                 "link_rules": _normalize_link_rules(None),
                 "dedupe": _normalize_dedupe(None),
                 "follow": _normalize_follow(None),
+                "network": _normalize_network({}),
             }
         elif isinstance(value, dict):
             base_url = normalize_base_url(value.get("base_url", ""))
@@ -203,6 +225,7 @@ def load_sites_config(path: str | Path) -> Dict[str, dict]:
                 "link_rules": link_rules,
                 "dedupe": dedupe,
                 "follow": follow,
+                "network": _normalize_network(value.get("network", value.get("anti_block", {}))),
             }
         else:
             raise ValueError(
