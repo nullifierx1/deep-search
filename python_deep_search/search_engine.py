@@ -209,6 +209,14 @@ def _page_has_meaningful_content(html: str, base_url: str = "") -> bool:
     return True
 
 
+def _page_mentions_query(html: str, query: str) -> bool:
+    terms = _re.findall(r"[\w-]{3,}", query.lower())
+    if not terms:
+        return True
+    text = clean_text(html).lower()
+    return any(term in text for term in terms)
+
+
 def _fetch_page(
     url: str,
     session: requests.Session,
@@ -227,6 +235,25 @@ def _fetch_page(
         if pw_html and _page_has_meaningful_content(pw_html, url):
             return pw_html
 
+    return html
+
+
+def _fetch_search_page(
+    url: str,
+    query: str,
+    session: requests.Session,
+    headers: dict[str, str],
+    timeout: int,
+    use_playwright: bool = True,
+) -> str | None:
+    html = _fetch_page(url, session, headers, timeout, use_playwright)
+    if not html or not use_playwright or _page_mentions_query(html, query):
+        return html
+
+    logger.info("%s: response does not mention query %r; retrying with Playwright", url, query)
+    rendered = _fetch_html_playwright(url, timeout)
+    if rendered:
+        return rendered
     return html
 
 
@@ -419,7 +446,7 @@ def search_site(
 
             logger.info("%s: запрос «%s» → %s", site_name, q, q_url)
 
-            body = _fetch_page(q_url, sess, headers, req.timeout_sec, req.use_playwright)
+            body = _fetch_search_page(q_url, q, sess, headers, req.timeout_sec, req.use_playwright)
             if body is None:
                 logger.warning("%s: не удалось загрузить «%s»", site_name, q)
                 continue
