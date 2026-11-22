@@ -11,13 +11,16 @@ from python_deep_search.models import SiteResult
 def test_http_catalog_search_progress_and_cancellation(monkeypatch):
     catalog = {"example": {"base_url": "https://example.test"}}
     started = Event()
+    following = Event()
 
-    def search(sites, request, *, cancel, result_callback, use_cache):
+    def search(sites, request, *, cancel, result_callback, stage_callback, use_cache):
         assert sites["example"]["path_builder"]["paths"] == ["/", "/mail"]
         assert request.follow_depth == 3
+        stage_callback("example", "following")
+        following.set()
+        assert started.wait(3)
         result = SiteResult("example", catalog["example"]["base_url"], "https://example.test/mail", False)
         result_callback(result)
-        started.set()
         assert cancel.wait(3)
         return {"example": result}
 
@@ -30,6 +33,7 @@ def test_http_catalog_search_progress_and_cancellation(monkeypatch):
             response = requests.get(base + "/api/sites", headers={"Origin": "http://localhost:5173"}, timeout=3)
             assert response.json() == {"sites": [{"id": "example", "base_url": "https://example.test", "paths": []}]}
             assert response.headers["Access-Control-Allow-Origin"] == "http://localhost:5173"
+            assert requests.get(base + "/api/v1/sites", timeout=3).json()["sites"][0]["group"] == "default"
             assert requests.get(base + "/api/sites", headers={"Host": "outside.test"}, timeout=3).status_code == 403
             start = base + "/api/searches"
             payload = {"sites": ["example"], "query": "needle", "paths": {"example": ["/", "/mail"]},
@@ -39,10 +43,14 @@ def test_http_catalog_search_progress_and_cancellation(monkeypatch):
             assert requests.post(start, json={**payload, "paths": {"example": ["//outside.test"]}}, timeout=3).status_code == 400
             response = requests.post(start, json=payload, timeout=3)
             assert response.status_code == 202
-            assert started.wait(3)
+            assert following.wait(3)
             assert requests.post(start, json=payload, timeout=3).status_code == 409
             job = start + "/" + response.json()["id"]
-            assert requests.get(job, timeout=3).json()["finished_sites"] == 1
+            v1_job = job.replace("/api/", "/api/v1/")
+            assert requests.get(v1_job, timeout=3).json()["site_progress"]["example"] == {
+                "stage": "following", "reason": None,
+            }
+            started.set()
             assert requests.post(job + "/cancel", timeout=3).json()["status"] == "cancelling"
             deadline = monotonic() + 3
             while monotonic() < deadline:
@@ -52,6 +60,9 @@ def test_http_catalog_search_progress_and_cancellation(monkeypatch):
                 sleep(0.02)
             assert snapshot["status"] == "cancelled"
             assert snapshot["results"]["example"]["search_url"] == "https://example.test/mail"
+            v1 = requests.get(v1_job, timeout=3).json()
+            assert v1["results"]["example"]["checked_pages"] == ["https://example.test/mail"]
+            assert "search_url" not in v1["results"]["example"]
         finally:
             server.shutdown()
             thread.join()

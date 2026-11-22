@@ -425,6 +425,7 @@ def search_site(
     session: requests.Session | None = None,
     *,
     cancel: Event | None = None,
+    stage_callback: Callable[[str, str], None] | None = None,
 ) -> SiteResult:
     started = time.perf_counter()
     cancel = cancel if cancel is not None else Event()
@@ -443,6 +444,8 @@ def search_site(
     all_matches: dict[str, SearchMatch] = {}
     all_links: dict[str, str] = {}
     try:
+        if stage_callback and not cancel.is_set():
+            stage_callback(site_name, "searching")
         for query in _expand_query(req.query):
             query_req = replace(req, query=query)
             empty = 0
@@ -508,6 +511,10 @@ def search_site(
         checked_keys = {_dedupe_key(url, dedupe) for url in checked}
         result.urls = [url for key, url in all_links.items() if key not in checked_keys][:req.max_links]
         if result.search_stop_reason not in SOURCE_STOP:
+            if stage_callback and result.urls and req.follow_links and not cancel.is_set() and (
+                site_config.get("follow") or {}
+            ).get("enabled", True):
+                stage_callback(site_name, "following")
             result.followed, result.follow_stop_reason = _follow_pages(
                 result.urls, checked_keys, site_config, req, sess, headers, cancel,
             )
@@ -536,6 +543,7 @@ def deep_search(
     use_cache: bool = True,
     cancel: Event | None = None,
     result_callback: Callable[[SiteResult], None] | None = None,
+    stage_callback: Callable[[str, str], None] | None = None,
 ) -> dict[str, SiteResult]:
     if cancel is not None and cancel.is_set():
         return {}
@@ -588,7 +596,7 @@ def deep_search(
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
-            executor.submit(search_site, site_name, site_cfg, req, cancel=cancel): site_name
+            executor.submit(search_site, site_name, site_cfg, req, cancel=cancel, stage_callback=stage_callback): site_name
             for site_name, site_cfg in sites.items()
         }
 

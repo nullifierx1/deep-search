@@ -78,6 +78,7 @@ class SearchJob:
     cancel: threading.Event = field(default_factory=threading.Event)
     results: dict[str, SiteResult] = field(default_factory=dict)
     error: str | None = None
+    stages: dict[str, str] = field(default_factory=dict)
 
 
 class SearchJobs:
@@ -93,7 +94,7 @@ class SearchJobs:
                 return None
             if len(self._jobs) >= 32:
                 del self._jobs[next(iter(self._jobs))]
-            job = SearchJob(total=len(sites))
+            job = SearchJob(total=len(sites), stages=dict.fromkeys(sites, "queued"))
             self._jobs[job.id] = job
             threading.Thread(target=self._run, args=(job, sites, request, use_cache), daemon=True).start()
             return self._snapshot(job)
@@ -102,9 +103,16 @@ class SearchJobs:
         def publish(result: SiteResult) -> None:
             with self._lock:
                 job.results[result.site_name] = result
+                job.stages[result.site_name] = "finished"
+
+        def stage(name: str, phase: str) -> None:
+            with self._lock:
+                job.stages[name] = phase
 
         try:
-            results = deep_search(sites, request, cancel=job.cancel, result_callback=publish, use_cache=use_cache)
+            results = deep_search(
+                sites, request, cancel=job.cancel, result_callback=publish, stage_callback=stage, use_cache=use_cache,
+            )
             with self._lock:
                 job.results = results
                 job.status = "cancelled" if job.cancel.is_set() else "completed"
@@ -125,10 +133,30 @@ class SearchJobs:
 
     @staticmethod
     def _snapshot(job: SearchJob) -> dict:
+        progress = {}
+        for name, stage in job.stages.items():
+            result = job.results.get(name)
+            reason = None
+            if result:
+                reason = result.follow_stop_reason or result.search_stop_reason
+                if reason is None:
+                    reason = "source_error" if result.error else ("found" if result.found else "empty")
+            elif job.status in {"cancelled", "failed"}:
+                stage = "finished"
+                reason = "cancelled" if job.status == "cancelled" else "job_failed"
+            progress[name] = {"stage": stage, "reason": reason}
         return {
             "id": job.id, "status": job.status, "total_sites": job.total,
             "finished_sites": len(job.results), "results": to_serializable(job.results), "error": job.error,
+            "site_progress": progress,
         }
+
+
+def _v1_snapshot(snapshot: dict) -> dict:
+    for result in snapshot["results"].values():
+        result["checked_pages"] = [url for url in result.pop("search_url").split(" | ") if url]
+    snapshot["finished_sites"] = sum(p["stage"] == "finished" for p in snapshot["site_progress"].values())
+    return snapshot
 
 
 def make_server(port: int, catalog: dict, frontend_origin: str | None = None) -> ThreadingHTTPServer:
@@ -136,6 +164,10 @@ def make_server(port: int, catalog: dict, frontend_origin: str | None = None) ->
 
     class Handler(BaseHTTPRequestHandler):
         def _respond(self, status: int, payload: dict | None = None) -> None:
+            if status >= 400 and self.path.startswith("/api/v1/") and payload is not None:
+                payload = {**payload, "code": {
+                    400: "invalid_request", 403: "forbidden", 404: "not_found", 409: "search_busy",
+                }.get(status, "server_error")}
             body = b"" if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             if body:
@@ -165,10 +197,14 @@ def make_server(port: int, catalog: dict, frontend_origin: str | None = None) ->
                 self._respond(204)
                 return
             path = urlsplit(self.path).path
+            v1 = path.startswith("/api/v1/")
+            if v1:
+                path = "/api/" + path.removeprefix("/api/v1/")
             if self.command == "GET" and path == "/api/sites":
                 self._respond(200, {"sites": [
                     {"id": name, "base_url": cfg["base_url"],
-                     "paths": (cfg.get("path_builder") or {}).get("paths", [])}
+                     "paths": (cfg.get("path_builder") or {}).get("paths", []),
+                     **({"name": cfg.get("name", name), "group": cfg.get("group", "default")} if v1 else {})}
                     for name, cfg in catalog.items()
                 ]})
                 return
@@ -181,13 +217,16 @@ def make_server(port: int, catalog: dict, frontend_origin: str | None = None) ->
                 except ValueError as error:
                     self._respond(400, {"error": str(error)})
                     return
-                self._respond(202, snapshot) if snapshot else self._respond(409, {"error": "A search is already running"})
+                if snapshot is None:
+                    self._respond(409, {"error": "A search is already running"})
+                else:
+                    self._respond(202, _v1_snapshot(snapshot) if v1 else snapshot)
                 return
             match = _JOB_ROUTE.fullmatch(path)
             if match and (self.command, bool(match[2])) in {("GET", False), ("POST", True)}:
                 snapshot = jobs.get(match[1], cancel=bool(match[2]))
                 if snapshot is not None:
-                    self._respond(200, snapshot)
+                    self._respond(200, _v1_snapshot(snapshot) if v1 else snapshot)
                     return
             self._respond(404, {"error": "Not found"})
 
@@ -204,7 +243,9 @@ def main() -> None:
     args = parser.parse_args()
     catalog = {}
     for path in args.catalog or _CATALOG:
-        catalog.update(load_sites_config(path))
+        for name, config in load_sites_config(path).items():
+            config.setdefault("group", path.stem)
+            catalog[name] = config
     if not args.catalog:
         catalog.pop("example_path_builder", None)
     with make_server(args.port, catalog, args.frontend_origin) as server:

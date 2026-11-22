@@ -219,6 +219,7 @@ def load_sites_config(path: str | Path) -> Dict[str, dict]:
             parsed[site_name] = {
                 "base_url": base_url,
                 "search_template": search_template,
+                **{key: value[key] for key in ("name", "group") if isinstance(value.get(key), str) and value[key].strip()},
                 "use_full_path": use_full_path,
                 "params": params,
                 "path_builder": path_builder,
