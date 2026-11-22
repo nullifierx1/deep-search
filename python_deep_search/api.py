@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 from .config import load_sites_config, normalize_page_paths
 from .models import SearchRequest, SiteResult
 from .output import to_serializable
-from .search_engine import deep_search
+from .search_engine import _expand_query, deep_search
 
 _EXAMPLES = Path(__file__).with_name("json-sites-examples")
 _CATALOG = [_EXAMPLES / name for name in ("sites.json", "cppreference.json", "lk-sites.json")]
@@ -44,7 +44,7 @@ def _request(raw: object, catalog: dict) -> tuple[dict, SearchRequest, bool]:
 
     query = raw.get("query")
     pattern = raw.get("regex_pattern", "")
-    if not isinstance(query, str) or not query.strip() or len(query) > 200:
+    if not isinstance(query, str) or not query.strip() or len(query) > 200 or not _expand_query(query):
         raise ValueError("Enter a query of 1 to 200 characters")
     if not isinstance(pattern, str) or len(pattern) > 500:
         raise ValueError("Invalid regular expression")

@@ -25,6 +25,7 @@ RETRY_MAX = 3
 RETRY_DELAYS = [1, 3, 5]
 MIN_MEANINGFUL_LENGTH = 1500
 MIN_CONTENT_LINKS = 5
+MAX_QUERY_VARIANTS = 32
 
 _LINK_BODY_RE = _re.compile(r'href=["\']([^"\']+)["\']', _re.IGNORECASE)
 
@@ -73,10 +74,12 @@ def _build_search_url(base_url: str, template: str, query: str) -> str:
 
 def _expand_query(raw: str) -> list[str]:
     alternatives = [a.strip() for a in raw.split("|")]
-    results: list[str] = []
+    results: dict[str, None] = {}
     for alt in alternatives:
-        results.extend(_expand_alternative(alt))
-    return results
+        results.update(dict.fromkeys(_expand_alternative(alt)))
+        if len(results) > MAX_QUERY_VARIANTS:
+            raise ValueError(f"Search query expands to more than {MAX_QUERY_VARIANTS} variants")
+    return list(results)
 
 
 def _expand_alternative(alt: str) -> list[str]:
@@ -87,9 +90,11 @@ def _expand_alternative(alt: str) -> list[str]:
     results = [""]
     for part in parts:
         if part.startswith("[") and part.endswith("]"):
-            chars = list(part[1:-1])
+            chars = list(dict.fromkeys(part[1:-1]))
             if not chars:
                 continue
+            if len(results) * len(chars) > MAX_QUERY_VARIANTS:
+                raise ValueError(f"Search query expands to more than {MAX_QUERY_VARIANTS} variants")
             new_results: list[str] = []
             for r in results:
                 for c in chars:
@@ -499,6 +504,8 @@ def deep_search(
 ) -> dict[str, SiteResult]:
     if cancel is not None and cancel.is_set():
         return {}
+    if not _expand_query(req.query):
+        raise ValueError("Enter a search query")
     if use_cache:
         cached = cache.get_cached_results(req, sites)
         if cached is not None:

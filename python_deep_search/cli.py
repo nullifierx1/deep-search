@@ -119,9 +119,13 @@ def run_cli(argv: list[str] | None = None) -> int:
     def progress(msg: str):
         print(f"[done] {msg}")
 
-    all_results = deep_search(
-        sites, req, max_workers=args.workers, progress_callback=progress, use_cache=not args.no_cache
-    )
+    try:
+        all_results = deep_search(
+            sites, req, max_workers=args.workers, progress_callback=progress, use_cache=not args.no_cache
+        )
+    except ValueError as error:
+        _safe_print(str(error))
+        return 2
     candidates = filter_candidates(all_results)
 
     print_results(all_results)

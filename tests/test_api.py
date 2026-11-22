@@ -34,6 +34,7 @@ def test_http_catalog_search_progress_and_cancellation(monkeypatch):
             payload = {"sites": ["example"], "query": "needle", "paths": {"example": ["/", "/mail"]},
                        "options": {"follow_depth": 3}}
             assert requests.post(start, json={**payload, "sites": ["unknown"]}, timeout=3).status_code == 400
+            assert requests.post(start, json={**payload, "query": "[ab]" * 20}, timeout=3).status_code == 400
             assert requests.post(start, json={**payload, "paths": {"example": ["//outside.test"]}}, timeout=3).status_code == 400
             response = requests.post(start, json=payload, timeout=3)
             assert response.status_code == 202
