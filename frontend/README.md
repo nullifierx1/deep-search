@@ -1,11 +1,22 @@
 # Веб-клиент Deep Search
 
-В этой папке будут исходники веб-клиента, его зависимости, настройки сборки и тесты. Бэкенд находится в пакете `python_deep_search`. Каталог сайтов, поиск и история доступны клиенту через [HTTP API `/api/v1`](../python_deep_search/README.md#локальный-api).
+Веб-клиент на React и Vite. Каталог сайтов, поиск и история доступны через [HTTP API `/api/v1`](../python_deep_search/README.md#локальный-api).
 
-Для разработки с отдельного локального порта запустите бэкенд из корня репозитория и передайте точный origin веб-клиента. Пример для порта 5173:
+В первом терминале из корня репозитория запустите бэкенд:
 
 ```powershell
-python -m python_deep_search.api --port 8765 --frontend-origin http://localhost:5173
+python -m python_deep_search.api --port 8765 --frontend-origin http://127.0.0.1:5173
 ```
 
-Сценарий первого запуска описан в [TODO.md](../TODO.md).
+Во втором терминале из корня запустите клиент:
+
+```powershell
+npm --prefix frontend ci
+npm --prefix frontend run dev
+```
+
+Откройте [http://127.0.0.1:5173](http://127.0.0.1:5173). Vite перенаправляет запросы `/api` на порт 8765. Для сборки используйте `npm --prefix frontend run build`.
+
+Для браузерной проверки установите Python-пакет `playwright` и Chromium через `python -m playwright install chromium`. При работающем Vite запустите из корня `python -m frontend.tests.browser_smoke`. Тест поднимает отдельный API и локальный источник.
+
+Оставшиеся задачи собраны в [TODO.md](../TODO.md).
