@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from random import uniform
+import re
 from threading import Event
 from time import monotonic
 from urllib.parse import urljoin, urlsplit
@@ -13,6 +14,16 @@ _ACCESS_ERRORS = {
     401: "authentication_required", 403: "access_denied", 407: "proxy_authentication_required",
     429: "rate_limited", 451: "unavailable_for_legal_reasons",
 }
+_CHALLENGE_TITLE = re.compile(
+    r"<title>\s*(?:just a moment[.!…]*|attention required!?\s*\|\s*cloudflare|"
+    r"verify (?:that )?you are human)\s*</title>", re.IGNORECASE,
+)
+SOURCE_STOP = {"authentication_required", "access_denied", "proxy_authentication_required",
+               "rate_limited", "unavailable_for_legal_reasons", "bot_challenge", "request_budget"}
+
+
+def is_challenge(html: str) -> bool:
+    return bool(_CHALLENGE_TITLE.search(html[:8192]))
 
 
 def _retry_after(value: str) -> float:
@@ -26,26 +37,46 @@ def _retry_after(value: str) -> float:
 
 
 class SearchSession(requests.Session):
-    def __init__(self, cancel: Event, policy: dict | None) -> None:
+    def __init__(self, cancel: Event, policy: dict | None, request_limit: int = 100) -> None:
         super().__init__()
         self.cancel = cancel
         self.policy = policy or {}
         self.status: int | None = None
         self.failure: str | None = None
+        self.request_limit = request_limit
+        self.http_requests = 0
+        self.browser_renders = 0
+        self.rendered_current = False
         self._next_request = monotonic()
 
     @property
     def can_render(self) -> bool:
-        return not self.cancel.is_set() and self.failure is None
+        return not self.cancel.is_set() and self.failure is None and not self.rendered_current
+
+    def begin_render(self) -> bool:
+        if not self._within_budget():
+            return False
+        self.rendered_current = True
+        self.browser_renders += 1
+        return True
+
+    def _within_budget(self) -> bool:
+        if self.http_requests + self.browser_renders < self.request_limit:
+            return True
+        self.failure = "request_budget"
+        return False
 
     def _get_page(self, url: str, headers: dict, timeout: int) -> requests.Response | None:
         for _ in range(6):
+            if not self._within_budget():
+                return None
             if self.cancel.wait(max(0, self._next_request - monotonic())):
                 self.failure = "cancelled"
                 return None
             if not self.policy.get("use_cookies", True):
                 self.cookies.clear()
             try:
+                self.http_requests += 1
                 response = self.get(url, headers=headers, timeout=timeout, allow_redirects=False)
             finally:
                 minimum = self.policy.get("min_delay_sec", 0.5)
@@ -65,6 +96,7 @@ class SearchSession(requests.Session):
     def fetch(self, url: str, headers: dict, timeout: int) -> str | None:
         self.status = None
         self.failure = None
+        self.rendered_current = False
         retry_codes = self.policy.get("retry_on_status", [429, 500, 502, 503, 504])
         retries = self.policy.get("max_retries", 2)
         for attempt in range(retries + 1):
@@ -85,7 +117,13 @@ class SearchSession(requests.Session):
             else:
                 if response is None:
                     break
+                if response.headers.get("cf-mitigated", "").lower() == "challenge":
+                    self.failure = "bot_challenge"
+                    break
                 if response.status_code == 200:
+                    if is_challenge(response.text):
+                        self.failure = "bot_challenge"
+                        break
                     self.failure = None
                     return response.text
                 self.failure = _ACCESS_ERRORS.get(response.status_code, f"http_{response.status_code}")

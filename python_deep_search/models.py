@@ -34,6 +34,8 @@ class SiteResult:
     search_stop_reason: str | None = None
     follow_stop_reason: str | None = None
     network_errors: dict[str, str] = field(default_factory=dict)
+    http_requests: int = 0
+    browser_renders: int = 0
 
 
 @dataclass(slots=True)
@@ -49,3 +51,4 @@ class SearchRequest:
     verbose: bool = False
     follow_depth: int = 1
     stop_after_empty: int = 0
+    max_requests_per_site: int = 100

@@ -19,7 +19,7 @@ LOG_FILE = CACHE_DIR / "log_cache.json"
 RESULTS_TTL = 30 * 24 * 3600
 LOG_TTL = 24 * 3600
 LOG_MAX_LINES = 500
-CACHE_SCHEMA_VERSION = 11
+CACHE_SCHEMA_VERSION = 12
 _lock = RLock()
 
 
@@ -71,6 +71,7 @@ def _query_key(req: SearchRequest, sites: dict) -> str:
         "follow_depth": req.follow_depth,
         "stop_after_empty": req.stop_after_empty,
         "timeout_sec": req.timeout_sec,
+        "max_requests_per_site": req.max_requests_per_site,
     }
     raw = json.dumps(request_data, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(f"{raw}:{h}".encode()).hexdigest()[:16]

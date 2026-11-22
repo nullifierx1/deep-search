@@ -16,7 +16,7 @@ import requests
 
 from .extractors import clean_text, extract_links, extract_query_snippets, extract_regex_matches
 from .models import FollowResult, SearchMatch, SearchRequest, SiteResult
-from .network import SearchSession
+from .network import SOURCE_STOP, SearchSession, is_challenge
 from . import cache
 
 logger = logging.getLogger(__name__)
@@ -228,6 +228,18 @@ def _page_mentions_query(html: str, query: str) -> bool:
     return any(term in text for term in terms)
 
 
+def _render_page(url: str, timeout: int, session: requests.Session) -> str | None:
+    managed = isinstance(session, SearchSession)
+    if managed and not session.begin_render():
+        return None
+    html = _fetch_html_playwright(url, timeout)
+    if html and is_challenge(html):
+        if managed:
+            session.failure = "bot_challenge"
+        return None
+    return html
+
+
 def _fetch_page(
     url: str,
     session: requests.Session,
@@ -242,7 +254,9 @@ def _fetch_page(
 
     if use_playwright and (not isinstance(session, SearchSession) or session.can_render):
         logger.info("Пробуем Playwright для %s (контент скудный или JS-скелет)", url)
-        pw_html = _fetch_html_playwright(url, timeout)
+        pw_html = _render_page(url, timeout, session)
+        if isinstance(session, SearchSession) and session.failure == "bot_challenge":
+            return None
         if pw_html and _page_has_meaningful_content(pw_html, url):
             return pw_html
 
@@ -265,7 +279,9 @@ def _fetch_search_page(
         return html
 
     logger.info("%s: response does not mention query %r; retrying with Playwright", url, query)
-    rendered = _fetch_html_playwright(url, timeout)
+    rendered = _render_page(url, timeout, session)
+    if isinstance(session, SearchSession) and session.failure == "bot_challenge":
+        return None
     if rendered:
         return rendered
     return html
@@ -392,6 +408,8 @@ def _follow_pages(
             empty = 0 if texts - seen_matches else empty + 1
             seen_matches.update(texts)
         results.append(result)
+        if result.error in SOURCE_STOP:
+            return results, result.error
         if req.stop_after_empty and empty >= req.stop_after_empty:
             return results, "empty_limit"
 
@@ -410,7 +428,7 @@ def search_site(
     cancel = cancel if cancel is not None else Event()
     base_url = site_config["base_url"]
     result = SiteResult(site_name, base_url, "", found=False)
-    sess = session if session is not None else SearchSession(cancel, site_config.get("network"))
+    sess = session if session is not None else SearchSession(cancel, site_config.get("network"), req.max_requests_per_site)
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -448,6 +466,9 @@ def search_site(
                             result.status_code = sess.status
                         if sess.failure and sess.failure != "cancelled":
                             result.network_errors[url] = sess.failure
+                        if sess.failure in SOURCE_STOP:
+                            result.search_stop_reason = sess.failure
+                            break
                     continue
                 result.status_code = 200
                 links, matches = _extract_from_page(
@@ -472,16 +493,17 @@ def search_site(
                 if first_visit and not isinstance(sess, SearchSession):
                     cancel.wait(0.5)
 
-            if cancel.is_set():
+            if cancel.is_set() or result.search_stop_reason in SOURCE_STOP:
                 break
 
         if cancel.is_set():
             result.search_stop_reason = "cancelled"
         result.search_url = " | ".join(checked)
         result.urls = [url for url in all_links if url not in checked][:req.max_links]
-        result.followed, result.follow_stop_reason = _follow_pages(
-            result.urls, set(checked), site_config, req, sess, headers, cancel,
-        )
+        if result.search_stop_reason not in SOURCE_STOP:
+            result.followed, result.follow_stop_reason = _follow_pages(
+                result.urls, set(checked), site_config, req, sess, headers, cancel,
+            )
         for page in result.followed:
             for match in page.matches:
                 all_matches.setdefault(match.text, match)
@@ -490,6 +512,9 @@ def search_site(
         if checked and not any(body is not None for body in checked.values()) and not cancel.is_set():
             result.error = "No search page could be loaded"
     finally:
+        if isinstance(sess, SearchSession):
+            result.http_requests = sess.http_requests
+            result.browser_renders = sess.browser_renders
         if session is None:
             sess.close()
     result.elapsed_sec = time.perf_counter() - started

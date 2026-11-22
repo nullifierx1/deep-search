@@ -21,6 +21,7 @@ _JOB_ROUTE = re.compile(r"/api/searches/([a-f0-9]{32})(/cancel)?")
 _LIMITS = {
     "max_results": (1, 100), "max_links": (1, 500), "timeout_sec": (3, 60),
     "follow_limit": (1, 100), "follow_depth": (1, 5), "stop_after_empty": (0, 100),
+    "max_requests_per_site": (1, 300),
 }
 
 

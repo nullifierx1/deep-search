@@ -76,3 +76,41 @@ def test_proxy_failure_has_specific_diagnostic(monkeypatch):
     result = search_site("example", {"base_url": "https://example.test", "path_builder": {"paths": ["/"]}},
                          SearchRequest("needle", ""))
     assert result.network_errors == {"https://example.test/": "proxy_error"}
+
+
+@pytest.mark.parametrize("response", [
+    _response(200, b"<title>Just a moment...</title>"),
+    _response(503, **{"cf-mitigated": "challenge"}),
+])
+def test_bot_challenge_stops_source_without_more_requests(monkeypatch, response):
+    calls = []
+    monkeypatch.setattr(SearchSession, "get", lambda _, url, **kwargs: calls.append(url) or response)
+    site = {"base_url": "https://example.test", "path_builder": {"paths": ["/", "/later"]}}
+    result = search_site("example", site, SearchRequest("needle", ""))
+    assert calls == ["https://example.test/"]
+    assert result.search_stop_reason == "bot_challenge"
+    assert result.http_requests == 1
+    assert result.browser_renders == 0
+
+
+def test_request_budget_counts_redirects(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        SearchSession, "get", lambda _, url, **kwargs: calls.append(url) or _response(302, Location="/next"),
+    )
+    site = {"base_url": "https://example.test", "path_builder": {"paths": ["/", "/later"]}}
+    result = search_site("example", site, SearchRequest("needle", "", max_requests_per_site=1))
+    assert calls == ["https://example.test/"]
+    assert result.search_stop_reason == "request_budget"
+
+
+def test_search_launches_browser_at_most_once_for_one_page(monkeypatch):
+    monkeypatch.setattr(SearchSession, "get", lambda *args, **kwargs: _response(200, b"<p>small shell</p>"))
+    renders = []
+    monkeypatch.setattr(
+        "python_deep_search.search_engine._fetch_html_playwright",
+        lambda url, _: renders.append(url) or "<p>another small shell</p>",
+    )
+    site = {"base_url": "https://example.test", "search_template": "{base}/search?q={query}"}
+    result = search_site("example", site, SearchRequest("needle", ""))
+    assert len(renders) == result.browser_renders == 1
