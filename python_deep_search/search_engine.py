@@ -3,10 +3,12 @@ from __future__ import annotations
 import logging
 import sys
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from queue import Queue
-from typing import Callable
+from threading import Event
+from typing import Callable, Iterator
 import re as _re
 from urllib.parse import quote_plus, urljoin as _urljoin_imp, urlparse as _urlparse_imp
 
@@ -310,83 +312,76 @@ def _filter_child_links(links: list[str], parent_links: list[str], max_links: in
     return filtered
 
 
-def _crawl_path_builder(
-    site_name: str,
-    base_url: str,
-    path_builder: dict,
-    query: str,
-    req: SearchRequest,
-    sess: requests.Session,
-    headers: dict[str, str],
-    link_rules: dict | None = None,
-    dedupe: dict | None = None,
-) -> tuple[list[str], list[SearchMatch], list[str]]:
-    paths = path_builder.get("paths")
-    prefer_query_links = bool(path_builder.get("prefer_query_links", False))
+def _seed_urls(site_config: dict, query: str) -> Iterator[str]:
+    builder = site_config.get("path_builder")
+    if not builder:
+        yield _resolve_search_url(site_config, query)
+        return
 
-    all_links: list[str] = []
-    all_matches: list[SearchMatch] = []
-    page_urls: list[str] = []
-    visited_urls: set[str] = set()
-    query_req = replace(req, query=query)
-
+    paths = builder.get("paths")
     if paths is None:
-        start = path_builder["start"]
-        end = path_builder["end"]
-        step = path_builder["step"]
-        pages = (
-            (n, end, path_builder["pattern"].format(n=n, query=quote_plus(query)))
-            for n in range(start, end + 1, step)
-        )
-    else:
-        pages = ((n, len(paths), path) for n, path in enumerate(paths, 1))
+        pages = range(builder["start"], builder["end"] + 1, builder["step"])
+        paths = (builder["pattern"].format(n=n, query=quote_plus(query)) for n in pages)
+    base = site_config["base_url"].rstrip("/")
+    for path in paths:
+        yield path if path.startswith(("http://", "https://")) else f"{base}/{path.lstrip('/')}"
 
-    for n, end, url in pages:
 
-        if not url.startswith("http"):
-            url = base_url.rstrip("/") + "/" + url.lstrip("/")
+def _origin(url: str) -> tuple[str, str]:
+    parsed = _urlparse_imp(url)
+    return parsed.scheme, parsed.netloc.lower()
 
-        if url in visited_urls:
+
+def _follow_pages(
+    seeds: list[str],
+    checked: set[str],
+    site_config: dict,
+    req: SearchRequest,
+    session: requests.Session,
+    headers: dict[str, str],
+    cancel: Event,
+) -> tuple[list[FollowResult], str | None]:
+    follow = site_config.get("follow") or {}
+    results: list[FollowResult] = []
+    if not req.follow_links or not follow.get("enabled", True):
+        return results, None
+
+    queue = deque((url, 1) for url in seeds if url not in checked)
+    seen = checked | set(seeds)
+    allowed_origin = _origin(site_config["base_url"])
+    empty = 0
+    while queue:
+        if cancel.is_set():
+            return results, "cancelled"
+        if len(results) >= req.follow_limit:
+            return results, "page_limit"
+        url, depth = queue.popleft()
+        if req.follow_depth > 1 and _origin(url) != allowed_origin:
             continue
-        visited_urls.add(url)
-        page_urls.append(url)
+        if cancel.wait(0.5):
+            return results, "cancelled"
 
-        logger.info("%s: [%d/%d] проверка «%s» → %s", site_name, n, end, query, url)
-
-        body = _fetch_page(url, sess, headers, req.timeout_sec, req.use_playwright)
+        body = _fetch_page(url, session, headers, req.timeout_sec, req.use_playwright)
+        result = FollowResult(source_url=url, depth=depth)
         if body is None:
-            logger.info("%s: пропуск %s (нет ответа или не 200)", site_name, url)
-            continue
+            result.error = "Page could not be loaded"
+        else:
+            links, result.matches = _extract_from_page(
+                body, url, req, link_rules=site_config.get("link_rules"), dedupe=site_config.get("dedupe"),
+            )
+            if follow.get("collect_child_links", True):
+                result.urls = _filter_child_links(links, seeds, req.max_links)
+                if depth < req.follow_depth:
+                    for link in result.urls:
+                        if link not in seen and _origin(link) == allowed_origin:
+                            seen.add(link)
+                            queue.append((link, depth + 1))
+            empty = 0 if result.matches else empty + 1
+        results.append(result)
+        if req.stop_after_empty and empty >= req.stop_after_empty:
+            return results, "empty_limit"
 
-        logger.info("%s: загружено (%d символов)", site_name, len(body))
-
-        links, matches = _extract_from_page(
-            body,
-            url,
-            query_req,
-            include_query_snippets=False,
-            prefer_query_links=prefer_query_links,
-            link_rules=link_rules,
-            dedupe=dedupe,
-        )
-
-        for link in links:
-            if link not in visited_urls:
-                all_links.append(link)
-
-        existing = {m.text for m in all_matches}
-        for m in matches:
-            if m.text not in existing:
-                existing.add(m.text)
-                all_matches.append(m)
-
-        time.sleep(0.5)
-
-    all_matches.sort(key=lambda x: x.score, reverse=True)
-    all_matches = all_matches[: req.max_results]
-    all_links = all_links[: req.max_links]
-
-    return all_links, all_matches, page_urls
+    return results, "cancelled" if cancel.is_set() else None
 
 
 def search_site(
@@ -394,253 +389,92 @@ def search_site(
     site_config: dict,
     req: SearchRequest,
     session: requests.Session | None = None,
+    *,
+    cancel: Event | None = None,
 ) -> SiteResult:
     started = time.perf_counter()
-    base_url = site_config.get("base_url", "")
-    search_url = ""
+    cancel = cancel if cancel is not None else Event()
+    base_url = site_config["base_url"]
+    result = SiteResult(site_name, base_url, "", found=False)
     sess = session or requests.Session()
-    own_session = session is None
-
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ru,en;q=0.9",
+        "Referer": base_url + "/",
+    }
+    builder = site_config.get("path_builder")
+    checked: dict[str, str | None] = {}
+    all_matches: dict[str, SearchMatch] = {}
+    all_links: dict[str, None] = {}
     try:
-        queries = _expand_query(req.query)
-
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "ru,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Cache-Control": "no-cache",
-            "Referer": base_url + "/",
-        }
-
-        path_builder = site_config.get("path_builder")
-        link_rules = site_config.get("link_rules")
-        dedupe = site_config.get("dedupe")
-        follow_config = site_config.get("follow") or {}
-
-        if path_builder:
-            links: list[str] = []
-            matches: list[SearchMatch] = []
-            search_urls: list[str] = []
-            seen_links: set[str] = set()
-            seen_matches: set[str] = set()
-
-            for q in queries:
-                q_links, q_matches, page_urls = _crawl_path_builder(
-                    site_name,
-                    base_url,
-                    path_builder,
-                    q,
-                    req,
-                    sess,
-                    headers,
-                    link_rules=link_rules,
-                    dedupe=dedupe,
-                )
-                search_urls.extend(page_urls if "paths" in path_builder else page_urls[:1])
-                for link in q_links:
-                    if link not in seen_links:
-                        seen_links.add(link)
-                        links.append(link)
-                for match in q_matches:
-                    if match.text not in seen_matches:
-                        seen_matches.add(match.text)
-                        matches.append(match)
-            search_urls = list(dict.fromkeys(search_urls))
-            all_urls = list(links[: req.max_links])
-            followed_results: list[FollowResult] = []
-            if req.follow_links and follow_config.get("enabled", True) and all_urls:
-                visited_follow = set(search_urls)
-                for target_url in all_urls[: req.follow_limit]:
-                    if target_url in visited_follow:
-                        continue
-                    visited_follow.add(target_url)
-                    time.sleep(0.5)
-                    logger.info("%s: following path_builder link %s", site_name, target_url)
-                    target_body = _fetch_page(
-                        target_url, sess, headers, req.timeout_sec, req.use_playwright
-                    )
-                    if target_body:
-                        logger.info("%s: loaded path_builder link %s (%d chars)", site_name, target_url, len(target_body))
-                        target_links, target_matches = _extract_from_page(
-                            target_body,
-                            target_url,
-                            req,
-                            link_rules=link_rules,
-                            dedupe=dedupe,
-                        )
-                        if not follow_config.get("collect_child_links", True):
-                            target_links = []
-                        followed_results.append(
-                            FollowResult(
-                                source_url=target_url,
-                                matches=target_matches,
-                                urls=_filter_child_links(target_links, all_urls, req.max_links),
-                            )
-                        )
-                        existing = {m.text for m in matches}
-                        for m in target_matches:
-                            if m.text not in existing:
-                                existing.add(m.text)
-                                matches.append(m)
-                matches.sort(key=lambda x: x.score, reverse=True)
-                matches = matches[: req.max_results]
-            elif req.follow_links and not follow_config.get("enabled", True):
-                logger.info("%s: follow_links disabled by site config", site_name)
-            elapsed = time.perf_counter() - started
-
-            found = bool(matches or all_urls)
-            logger.info(
-                "%s: завершено (%s, страниц пройдено: %d, совпадений: %d)",
-                site_name,
-                "найдено" if found else "пусто",
-                len(queries) * (
-                    len(path_builder["paths"])
-                    if "paths" in path_builder
-                    else len(range(path_builder["start"], path_builder["end"] + 1, path_builder["step"]))
-                ),
-                len(matches),
-            )
-            return SiteResult(
-                site_name=site_name,
-                base_url=base_url,
-                search_url=" | ".join(search_urls),
-                found=found,
-                matches=matches,
-                urls=all_urls,
-                followed=followed_results,
-                status_code=200,
-                elapsed_sec=elapsed,
-            )
-
-        all_matches: list[SearchMatch] = []
-        all_links: list[str] = []
-        followed_results: list[FollowResult] = []
-        seen_links: set[str] = set()
-        search_urls: list[str] = []
-
-        for q in queries:
-            q_url = _resolve_search_url(site_config, q)
-            search_urls.append(q_url)
-            if not search_url:
-                search_url = q_url
-
-            logger.info("%s: запрос «%s» → %s", site_name, q, q_url)
-
-            body = _fetch_search_page(q_url, q, sess, headers, req.timeout_sec, req.use_playwright)
-            if body is None:
-                logger.warning("%s: не удалось загрузить «%s»", site_name, q)
-                continue
-
-            logger.info("%s: загружено «%s» (%d символов)", site_name, q, len(body))
-
-            # A search page usually echoes the query in its title or form.
-            # Do not treat that echo as evidence that a result page matched.
-            q_links, q_matches = _extract_from_page(
-                body,
-                q_url,
-                req,
-                include_query_snippets=False,
-                prefer_query_links=True,
-                link_rules=link_rules,
-                dedupe=dedupe,
-            )
-
-            existing_texts = {m.text for m in all_matches}
-            for m in q_matches:
-                if m.text not in existing_texts:
-                    existing_texts.add(m.text)
-                    all_matches.append(m)
-
-            for link in q_links:
-                if link not in seen_links:
-                    seen_links.add(link)
-                    all_links.append(link)
-
-            time.sleep(0.5)
-
-        elapsed = time.perf_counter() - started
-
-        visited_follow: set[str] = set(search_urls)
-        if req.follow_links and follow_config.get("enabled", True) and all_links:
-            for target_url in all_links[: req.follow_limit]:
-                if target_url in visited_follow:
+        for query in _expand_query(req.query):
+            query_req = replace(req, query=query)
+            empty = 0
+            query_pages: set[str] = set()
+            for url in _seed_urls(site_config, query):
+                if cancel.is_set():
+                    result.search_stop_reason = "cancelled"
+                    break
+                if url in query_pages:
                     continue
-                visited_follow.add(target_url)
-                time.sleep(0.5)
-                logger.info("%s: переход по ссылке %s", site_name, target_url)
-                target_body = _fetch_page(
-                    target_url, sess, headers, req.timeout_sec, req.use_playwright
+                query_pages.add(url)
+                first_visit = url not in checked
+                if first_visit:
+                    logger.info("%s: searching %r at %s", site_name, query, url)
+                    checked[url] = (
+                        _fetch_page(url, sess, headers, req.timeout_sec, req.use_playwright)
+                        if builder
+                        else _fetch_search_page(url, query, sess, headers, req.timeout_sec, req.use_playwright)
+                    )
+                body = checked[url]
+                if body is None:
+                    continue
+                result.status_code = 200
+                links, matches = _extract_from_page(
+                    body, url, query_req,
+                    include_query_snippets=bool(builder and builder.get("paths")),
+                    prefer_query_links=builder.get("prefer_query_links", False) if builder else True,
+                    link_rules=site_config.get("link_rules"),
+                    dedupe=site_config.get("dedupe"),
                 )
-                if target_body:
-                    logger.info("%s: загружена ссылка %s (%d символов)", site_name, target_url, len(target_body))
-                    target_links, target_matches = _extract_from_page(
-                        target_body,
-                        target_url,
-                        req,
-                        link_rules=link_rules,
-                        dedupe=dedupe,
-                    )
-                    if not follow_config.get("collect_child_links", True):
-                        target_links = []
-                    followed_results.append(
-                        FollowResult(
-                            source_url=target_url,
-                            matches=target_matches,
-                            urls=_filter_child_links(target_links, all_links, req.max_links),
-                        )
-                    )
-                    existing = {m.text for m in all_matches}
-                    for m in target_matches:
-                        if m.text not in existing:
-                            existing.add(m.text)
-                            all_matches.append(m)
-        elif req.follow_links and not follow_config.get("enabled", True):
-            logger.info("%s: follow_links disabled by site config", site_name)
+                links = [link for link in links if link != url]
+                if links or matches:
+                    empty = 0
+                else:
+                    empty += 1
+                for link in links:
+                    all_links[link] = None
+                for match in matches:
+                    all_matches.setdefault(match.text, match)
+                if req.stop_after_empty and empty >= req.stop_after_empty:
+                    result.search_stop_reason = "empty_limit"
+                    break
+                if first_visit:
+                    cancel.wait(0.5)
 
-        all_matches.sort(key=lambda x: x.score, reverse=True)
-        all_matches = all_matches[: req.max_results]
-        all_urls = all_links[: req.max_links]
+            if cancel.is_set():
+                break
 
-        found = bool(all_matches or all_urls)
-        logger.info(
-            "%s: завершено (%s, запросов: %d, совпадений: %d, ссылок: %d)",
-            site_name,
-            "найдено" if found else "пусто",
-            len(queries),
-            len(all_matches),
-            len(all_urls),
+        if cancel.is_set():
+            result.search_stop_reason = "cancelled"
+        result.search_url = " | ".join(checked)
+        result.urls = [url for url in all_links if url not in checked][:req.max_links]
+        result.followed, result.follow_stop_reason = _follow_pages(
+            result.urls, set(checked), site_config, req, sess, headers, cancel,
         )
-
-        return SiteResult(
-            site_name=site_name,
-            base_url=base_url,
-            search_url=" | ".join(search_urls) if len(search_urls) > 1 else search_url,
-            found=found,
-            matches=all_matches,
-            urls=all_urls,
-            followed=followed_results,
-            status_code=200,
-            elapsed_sec=elapsed,
-        )
-
-    except requests.RequestException as e:
-        elapsed = time.perf_counter() - started
-        logger.warning("%s: ошибка запроса: %s", site_name, e)
-        return SiteResult(
-            site_name=site_name,
-            base_url=base_url,
-            search_url=search_url,
-            found=False,
-            elapsed_sec=elapsed,
-            error=str(e),
-        )
+        for page in result.followed:
+            for match in page.matches:
+                all_matches.setdefault(match.text, match)
+        result.matches = sorted(all_matches.values(), key=lambda match: -match.score)[:req.max_results]
+        result.found = bool(result.matches or result.urls)
+        if checked and result.status_code is None and not cancel.is_set():
+            result.error = "No search page could be loaded"
     finally:
-        if own_session:
+        if session is None:
             sess.close()
+    result.elapsed_sec = time.perf_counter() - started
+    return result
 
 
 def deep_search(
@@ -649,7 +483,11 @@ def deep_search(
     max_workers: int = 6,
     progress_callback: Callable[[str], None] | None = None,
     use_cache: bool = True,
+    cancel: Event | None = None,
+    result_callback: Callable[[SiteResult], None] | None = None,
 ) -> dict[str, SiteResult]:
+    if cancel is not None and cancel.is_set():
+        return {}
     if use_cache:
         cached = cache.get_cached_results(req, sites)
         if cached is not None:
@@ -666,6 +504,7 @@ def deep_search(
                         ],
                         urls=f.get("urls", []),
                         error=f.get("error"),
+                        depth=f.get("depth", 1),
                     )
                     for f in entry.get("followed", [])
                 ]
@@ -680,7 +519,12 @@ def deep_search(
                     status_code=entry.get("status_code"),
                     elapsed_sec=entry.get("elapsed_sec", 0),
                     error=entry.get("error"),
+                    search_stop_reason=entry.get("search_stop_reason"),
+                    follow_stop_reason=entry.get("follow_stop_reason"),
                 )
+            if result_callback:
+                for result in results.values():
+                    result_callback(result)
             if progress_callback:
                 progress_callback("загружено из кэша")
             return results
@@ -690,7 +534,7 @@ def deep_search(
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
-            executor.submit(search_site, site_name, site_cfg, req): site_name
+            executor.submit(search_site, site_name, site_cfg, req, cancel=cancel): site_name
             for site_name, site_cfg in sites.items()
         }
 
@@ -708,12 +552,16 @@ def deep_search(
                     error=f"Неожиданная ошибка: {e}",
                 )
 
+            if result.search_stop_reason == "cancelled" and not result.search_url:
+                continue
             results[site_name] = result
+            if result_callback:
+                result_callback(result)
             if progress_callback:
                 state = "найдено" if result.found else "пусто"
                 progress_callback(f"{site_name}: {state}")
 
-    if use_cache and results:
+    if use_cache and results and (cancel is None or not cancel.is_set()) and not any(r.error for r in results.values()):
         cache.set_cached_results(req, sites, results)
 
     return results

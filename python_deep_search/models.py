@@ -16,6 +16,7 @@ class FollowResult:
     matches: List[SearchMatch] = field(default_factory=list)
     urls: List[str] = field(default_factory=list)
     error: Optional[str] = None
+    depth: int = 1
 
 
 @dataclass(slots=True)
@@ -30,6 +31,8 @@ class SiteResult:
     status_code: Optional[int] = None
     elapsed_sec: float = 0.0
     error: Optional[str] = None
+    search_stop_reason: str | None = None
+    follow_stop_reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -43,3 +46,5 @@ class SearchRequest:
     follow_limit: int = 5
     use_playwright: bool = True
     verbose: bool = False
+    follow_depth: int = 1
+    stop_after_empty: int = 0

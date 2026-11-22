@@ -18,7 +18,7 @@ LOG_FILE = CACHE_DIR / "log_cache.json"
 RESULTS_TTL = 30 * 24 * 3600
 LOG_TTL = 24 * 3600
 LOG_MAX_LINES = 500
-CACHE_SCHEMA_VERSION = 8
+CACHE_SCHEMA_VERSION = 9
 
 
 def _ensure_cache_dir() -> None:
@@ -57,6 +57,9 @@ def _query_key(req: SearchRequest, sites: dict) -> str:
         "follow_links": req.follow_links,
         "follow_limit": req.follow_limit,
         "use_playwright": req.use_playwright,
+        "follow_depth": req.follow_depth,
+        "stop_after_empty": req.stop_after_empty,
+        "timeout_sec": req.timeout_sec,
     }
     raw = json.dumps(request_data, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(f"{raw}:{h}".encode()).hexdigest()[:16]
@@ -96,12 +99,15 @@ def set_cached_results(req: SearchRequest, sites: dict, results: dict[str, SiteR
                     "urls": f.urls,
                     "matches": [{"text": m.text, "score": m.score} for m in f.matches],
                     "error": f.error,
+                    "depth": f.depth,
                 }
                 for f in r.followed
             ],
             "status_code": r.status_code,
             "elapsed_sec": r.elapsed_sec,
             "error": r.error,
+            "search_stop_reason": r.search_stop_reason,
+            "follow_stop_reason": r.follow_stop_reason,
         }
     cache[key] = {"ts": time.time(), "query": req.query, "results": serializable}
     _write_json(RESULTS_FILE, cache)
