@@ -1,4 +1,4 @@
-.SILENT: cli gui run clean clean-cache-results pep8 test format install help check
+.SILENT: cli gui api run clean clean-cache-results pep8 test format install help check
 
 PYTHON = python3
 FLAKE8 = flake8
@@ -17,8 +17,9 @@ TIMEOUT ?=15
 WORKERS ?=6
 OUT ?=python_deep_search/results.json
 VERBOSE ?=0
+API_PORT ?=8765
 
-.PHONY: cli gui run clean clean-cache-results pep8 test format install help check all
+.PHONY: cli gui api run clean clean-cache-results pep8 test format install help check all
 
 cli:
 	@if not defined QUERY (echo Usage: make cli QUERY="search query" [REGEX="..." SITES="..." ...] && exit /b 1)
@@ -38,6 +39,9 @@ cli-open:
 
 gui:
 	$(PYTHON) -m $(PACKAGE).main --mode gui
+
+api:
+	$(PYTHON) -m $(PACKAGE).api --port $(API_PORT)
 
 run: cli
 
@@ -102,6 +106,7 @@ help:
 	@echo.
 	@echo   Application:
 	@echo     make gui                       Launch GUI
+	@echo     make api API_PORT=8765         Launch localhost API
 	@echo     make cli QUERY="query"          CLI search
 	@echo     make cli-open QUERY="query"     CLI + open links in browser
 	@echo     make cli-no-follow QUERY="..."  CLI without following links
