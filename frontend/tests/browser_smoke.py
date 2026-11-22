@@ -5,10 +5,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event, Thread
+from time import time
+from unittest.mock import patch
+import json
 
 from playwright.sync_api import expect, sync_playwright
 
 from python_deep_search.api import make_server
+from python_deep_search import cache
 
 
 @contextmanager
@@ -39,7 +43,11 @@ def main():
         base = f"http://127.0.0.1:{source.server_port}"
         catalog = {"fixture": {"base_url": base, "name": "Local fixture", "group": "sites",
                                "network": {"min_delay_sec": 0}}}
-        with serving(make_server(0, catalog, origin, history_path=Path(temp) / "history.db")) as server:
+        results_cache = Path(temp) / "cache.json"
+        results_cache.write_text(json.dumps({"old": {"ts": time() - cache.RESULTS_TTL - 1}}))
+        with patch.object(cache, "RESULTS_FILE", results_cache), serving(
+            make_server(0, catalog, origin, history_path=Path(temp) / "history.db")
+        ) as server:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch()
                 page = browser.new_page(viewport={"width": 1440, "height": 920})
@@ -53,12 +61,22 @@ def main():
 
                 page.route("**/api/v1/**", reroute)
                 page.goto(origin)
-                page.get_by_role("checkbox", name="Local fixture").check()
+                page.get_by_role("checkbox", name="Общий каталог").check()
+                expect(page.get_by_role("checkbox", name="Local fixture")).to_be_checked()
+                page.get_by_text("Мои группы", exact=True).click()
+                page.get_by_role("textbox", name="Имя группы").fill("Test group")
+                page.get_by_role("button", name="Сохранить выбранные").click()
+                page.get_by_role("checkbox", name="Test group").uncheck()
+                expect(page.get_by_role("checkbox", name="Local fixture")).not_to_be_checked()
+                page.get_by_role("checkbox", name="Test group").check()
                 page.get_by_role("button", name="Пути для Local fixture").click()
                 paths = page.get_by_role("textbox", name="Пути, каждый с новой строки")
                 paths.fill("/catalog")
                 page.get_by_role("textbox", name="Поисковый запрос").fill("needle")
                 page.get_by_role("button", name="Настройки").click()
+                expect(page.get_by_text("Просроченных: 1", exact=False)).to_be_visible()
+                page.get_by_role("button", name="Удалить просроченные").click()
+                expect(page.get_by_role("status")).to_contain_text("Удалено записей: 1")
                 page.get_by_role("checkbox", name="Включить Playwright").uncheck()
                 page.get_by_role("checkbox", name="Обходить ссылки").uncheck()
                 page.get_by_role("button", name="Найти", exact=True).click()
@@ -68,6 +86,7 @@ def main():
                 expect(page.get_by_role("link", name=base + "/catalog")).to_be_visible()
 
                 page.reload()
+                expect(page.get_by_role("checkbox", name="Test group")).to_be_visible()
                 expect(page.locator(".result-row")).to_contain_text("Найдено")
                 page.get_by_role("button", name="История", exact=True).click()
                 page.locator(".history-row").click()

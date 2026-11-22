@@ -35,6 +35,59 @@ function Link({ url }) {
   return safe ? <a href={url} target="_blank" rel="noreferrer">{url}<ExternalLink size={13}/></a> : <span>{url}</span>
 }
 
+function CacheControls() {
+  const [stats, setStats] = useState(null)
+  const [pending, setPending] = useState(false)
+  const [message, setMessage] = useState('')
+  async function load(action) {
+    setPending(true)
+    setMessage('')
+    try {
+      const data = await api('/cache', action ? { method: 'POST', body: { action } } : undefined)
+      setStats(data)
+      if (action) setMessage('Удалено записей: ' + data.removed)
+    } catch (error) {
+      setMessage(error.message)
+    } finally {
+      setPending(false)
+    }
+  }
+  useEffect(() => { load() }, [])
+  return <section className="cache-controls" aria-label="Кеш результатов">
+    <h3>Кеш результатов</h3>
+    {stats && <p className="muted">Актуальных: {stats.valid} · Просроченных: {stats.expired} · Срок: {stats.ttl_seconds / 86400} дней</p>}
+    <div className="actions">
+      <button type="button" disabled={pending} onClick={() => load()}>Обновить</button>
+      <button type="button" disabled={pending || !stats?.expired} onClick={() => load('expired')}>Удалить просроченные</button>
+      <button type="button" disabled={pending || !(stats?.valid || stats?.expired)} onClick={() => {
+        if (window.confirm('Очистить кеш результатов поиска? История сохранится.')) load('all')
+      }}>Очистить кеш</button>
+    </div>
+    {message && <p role="status">{message}</p>}
+  </section>
+}
+
+const groupKey = 'deep-search-groups'
+
+function readGroups() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(groupKey))
+    return Array.isArray(saved) ? saved : []
+  } catch {
+    return []
+  }
+}
+
+function GroupToggle({ name, ids, selected, onToggle }) {
+  const count = ids.filter(id => selected.includes(id)).length
+  return <label className="group-toggle">
+    <input type="checkbox" checked={count === ids.length && count > 0} disabled={!ids.length}
+      ref={input => { if (input) input.indeterminate = count > 0 && count < ids.length }}
+      onChange={() => onToggle(ids)}/>
+    <span>{name}</span><small>{count}/{ids.length}</small>
+  </label>
+}
+
 function SiteDetails({ result, reason }) {
   return <div className="details">
     {reason && <p className="muted">Причина завершения <code>{reason}</code></p>}
@@ -105,6 +158,8 @@ function App() {
   const [view, setView] = useState('search')
   const [sites, setSites] = useState([])
   const [selected, setSelected] = useState([])
+  const [savedGroups, setSavedGroups] = useState(readGroups)
+  const [groupName, setGroupName] = useState('')
   const [filter, setFilter] = useState('')
   const [query, setQuery] = useState('')
   const [paths, setPaths] = useState({})
@@ -209,6 +264,20 @@ function App() {
   }
 
   const toggle = id => setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+  const toggleGroup = ids => setSelected(prev => ids.every(id => prev.includes(id))
+    ? prev.filter(id => !ids.includes(id)) : [...new Set([...prev, ...ids])])
+  function updateGroups(next) {
+    localStorage.setItem(groupKey, JSON.stringify(next))
+    setSavedGroups(next)
+  }
+  function saveGroup(event) {
+    event.preventDefault()
+    const name = groupName.trim()
+    if (!name || !selected.length) return
+    const replacement = { name, sites: [...selected] }
+    updateGroups([...savedGroups.filter(group => group.name !== name), replacement])
+    setGroupName('')
+  }
   const retryConnection = () => { setError(''); setGeneration(value => value + 1) }
   return <div className="shell">
     <aside className="sidebar">
@@ -224,8 +293,21 @@ function App() {
           const ids = visible.map(site => site.id)
           setSelected(ids.every(id => selected.includes(id)) ? selected.filter(id => !ids.includes(id)) : [...new Set([...selected, ...ids])])
         }}>{visible.length && visible.every(site => selected.includes(site.id)) ? 'Снять выбор' : 'Выбрать видимые'}</button>
+        <details className="saved-groups" open={savedGroups.length > 0 ? true : undefined}>
+          <summary>Мои группы</summary>
+          {savedGroups.map(group => <div className="source-row" key={group.name}>
+            <GroupToggle name={group.name} ids={group.sites.filter(id => catalog[id])} selected={selected} onToggle={toggleGroup}/>
+            <button className="icon-button" aria-label={'Удалить группу ' + group.name}
+              onClick={() => updateGroups(savedGroups.filter(item => item !== group))}>×</button>
+          </div>)}
+          <form className="group-form" onSubmit={saveGroup}>
+            <input aria-label="Имя группы" placeholder="Имя группы" maxLength={50} value={groupName} onChange={event => setGroupName(event.target.value)}/>
+            <button disabled={!groupName.trim() || !selected.length}>Сохранить выбранные</button>
+          </form>
+        </details>
         {[...grouped].map(([group, entries]) => <div className="source-group" key={group}>
-          <h3>{groups[group] || group}</h3>
+          <h3><GroupToggle name={groups[group] || group} ids={sites.filter(site => site.group === group).map(site => site.id)}
+            selected={selected} onToggle={toggleGroup}/></h3>
           {entries.map(site => <div className="source-item" key={site.id}>
             <div className="source-row"><label><input type="checkbox" checked={selected.includes(site.id)} onChange={() => toggle(site.id)}/>{site.name}</label>
               <button className="icon-button" aria-label={'Пути для ' + site.name} aria-expanded={editing === site.id}
@@ -263,6 +345,7 @@ function App() {
               {Object.entries({ follow_links: 'Обходить ссылки', use_playwright: 'Включить Playwright', use_cache: 'Использовать кеш' })
                 .map(([key, label]) => <label className="flag" key={key}><input type="checkbox" checked={options[key] ?? true}
                   onChange={e => setOptions(prev => ({ ...prev, [key]: e.target.checked }))}/>{label}</label>)}
+              <CacheControls/>
             </div>}
           </form>
           <Results key={job?.id ?? 'empty'} job={job} sites={catalog} busy={busy}
