@@ -1,3 +1,4 @@
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Event, Thread
 from time import monotonic, sleep
 
@@ -54,3 +55,49 @@ def test_http_catalog_search_progress_and_cancellation(monkeypatch):
         finally:
             server.shutdown()
             thread.join()
+
+
+def test_http_search_crawls_a_local_site_to_the_requested_depth():
+    pages = {
+        "/mail": '<a href="/thread">needle thread</a>',
+        "/thread": '<p>Thread text</p><a href="/reply">Read reply</a>',
+        "/reply": "<p>needle evidence</p>",
+    }
+
+    class LocalSite(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(pages[self.path].encode())
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), LocalSite) as source:
+        site_url = f"http://127.0.0.1:{source.server_port}"
+        catalog = {"example": {"base_url": site_url, "network": {"min_delay_sec": 0}}}
+        with api.make_server(0, catalog) as server:
+            threads = [Thread(target=s.serve_forever, daemon=True) for s in (source, server)]
+            for thread in threads:
+                thread.start()
+            try:
+                endpoint = f"http://127.0.0.1:{server.server_port}/api/searches"
+                started = requests.post(endpoint, json={
+                    "sites": ["example"], "query": "needle", "regex_pattern": "needle evidence",
+                    "paths": {"example": ["/mail"]},
+                    "options": {"follow_depth": 2, "use_playwright": False, "use_cache": False},
+                }, timeout=3)
+                assert started.status_code == 202
+                deadline = monotonic() + 3
+                while monotonic() < deadline:
+                    status = requests.get(endpoint + "/" + started.json()["id"], timeout=3).json()
+                    if status["status"] != "running":
+                        break
+                    sleep(0.02)
+                assert status["status"] == "completed"
+                result = status["results"]["example"]
+                assert result["search_url"] == site_url + "/mail"
+                assert [page["depth"] for page in result["followed"]] == [1, 2]
+                assert result["matches"][0]["text"] == "needle evidence"
+            finally:
+                source.shutdown()
+                server.shutdown()
+                for thread in threads:
+                    thread.join()
